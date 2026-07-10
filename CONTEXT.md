@@ -24,6 +24,3 @@ A Job that hands Grok Build a stuck problem, a second-opinion pass, or a substan
 
 ### Review
 A Job in which Grok Build reviews a diff and returns structured findings. Always read-only.
-
-### Transfer
-Handing the current Claude Code session's context over to Grok Build so work continues there. (Phase 2.)

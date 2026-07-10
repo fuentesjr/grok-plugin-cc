@@ -41,7 +41,6 @@ Pre-verified by live ACP spike (2026-07-09): process-level sandbox enforcement, 
 
 ## Phase 2 — Parity (grill before starting)
 
-- [ ] Design grilling for transfer semantics and stop-review-gate behavior
-- [ ] `/grok:transfer` — Claude→Grok session hand-off (riskiest piece)
+- [ ] Design grilling for stop-review-gate behavior
 - [ ] `/grok:adversarial-review` + stop-review-gate Stop hook
 - [ ] `skills/grok-prompting/` — sourced strictly from xAI's official guidance

@@ -20,7 +20,9 @@ structural port. Read alongside `implementation-notes.md` and `docs/adr/`.
 
 **Verbatim ports:** `args.mjs`, `fs.mjs`, `prompts.mjs`, `process.mjs`, `workspace.mjs`, `git.mjs`, `state.mjs` (rename fallback dir/slug to `grok-companion`), `tracked-jobs.mjs` (env → `GROK_COMPANION_SESSION_ID`; keep progress-event contract `{message, phase, threadId, turnId, stderrMessage, logTitle, logBody}` — map thread/turn ids to ACP session/turn), `schemas/review-output.schema.json`, `tests/helpers.mjs`, test harness pattern (`node --test tests/*.test.mjs`).
 
-**Deferred to Phase 2:** `claude-session-transfer.mjs`, `transfer` subcommand, `adversarial-review`, `stop-review-gate-hook.mjs` + Stop hook entry, prompting skill.
+**Deferred to Phase 2:** `adversarial-review`, `stop-review-gate-hook.mjs` + Stop hook entry, prompting skill.
+
+**Dropped 2026-07-10:** `claude-session-transfer.mjs`, `transfer` subcommand (see `implementation-notes.md`).
 
 ## Companion CLI contract (mirrors reference `codex-companion.mjs`)
 

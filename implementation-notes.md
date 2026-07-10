@@ -36,9 +36,11 @@ A Claude Code plugin that delegates work to Grok Build (xAI's `grok` CLI), a fai
 
 **Phase 1 (core loop):** broker + ACP client, `/grok:rescue`, `/grok:review`, `/grok:status`, `/grok:cancel`, `/grok:result`, `/grok:setup`, `grok-rescue` agent, `grok-cli-runtime` + `grok-result-handling` skills, session-lifecycle hooks, review output schema (reuse codex's `review-output.schema.json` shape).
 
-**Phase 2:** `/grok:transfer` (Claude→Grok session hand-off — riskiest piece), `/grok:adversarial-review`, stop-review-gate hook, `grok-prompting` skill (base strictly on xAI's official docs.x.ai guidance; keep short), worktree isolation for background write jobs if the clean-tree guard chafes.
+**Phase 2:** `/grok:adversarial-review`, stop-review-gate hook, `grok-prompting` skill (base strictly on xAI's official docs.x.ai guidance; keep short), worktree isolation for background write jobs if the clean-tree guard chafes.
 
 Phase 2 details deliberately un-grilled — grill them when Phase 1 ships.
+
+**Cut features:** `/grok:transfer` cut 2026-07-10: codex's session import relies on a codex-specific RPC with no verified ACP equivalent; risk/value didn't justify it.
 
 ## Environment facts (as of 2026-07-09)
 
