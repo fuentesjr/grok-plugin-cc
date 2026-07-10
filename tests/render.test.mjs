@@ -55,5 +55,5 @@ test("renderStoredJobResult prefers rendered output for structured review jobs",
   assert.match(output, /^# Grok Adversarial Review/);
   assert.doesNotMatch(output, /^\{/);
   assert.match(output, /Grok session ID: thr_123/);
-  assert.match(output, /Resume in Grok: grok resume thr_123/);
+  assert.match(output, /Resume with Grok: \/grok:rescue --resume <follow-up request>/);
 });

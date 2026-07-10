@@ -52,7 +52,8 @@ function stripLogPrefix(line) {
 
 function isProgressBlockTitle(line) {
   return (
-    ["Final output", "Assistant message", "Reasoning summary", "Review output"].includes(line) ||
+    ["Final output", "Assistant message", "Reasoning summary", "Review output", "Plan"].includes(line) ||
+    /^Tool .+ output$/.test(line) ||
     /^Subagent .+ message$/.test(line) ||
     /^Subagent .+ reasoning summary$/.test(line)
   );
@@ -122,8 +123,11 @@ function inferLegacyJobPhase(job, progressPreview = []) {
 
   for (let index = progressPreview.length - 1; index >= 0; index -= 1) {
     const line = progressPreview[index].toLowerCase();
-    if (line.startsWith("starting codex") || line.startsWith("thread ready") || line.startsWith("turn started")) {
+    if (line.startsWith("starting grok") || line.startsWith("session ready") || line.startsWith("turn started")) {
       return "starting";
+    }
+    if (line.startsWith("reasoning:") || line.startsWith("plan updated:")) {
+      return "investigating";
     }
     if (line.startsWith("reviewer started") || line.includes("review mode")) {
       return "reviewing";
@@ -144,13 +148,22 @@ function inferLegacyJobPhase(job, progressPreview = []) {
     if (line.startsWith("command completed:")) {
       return looksLikeVerificationCommand(line) ? "verifying" : "running";
     }
+    if (line.startsWith("command failed:") || line.startsWith("tool failed:")) {
+      return "failed";
+    }
     if (line.startsWith("applying ") || line.startsWith("file changes ")) {
       return "editing";
     }
-    if (line.startsWith("turn completed")) {
+    if (line.startsWith("assistant message captured:") || line.startsWith("turn completed")) {
       return "finalizing";
     }
-    if (line.startsWith("codex error:") || line.startsWith("failed:")) {
+    if (line.startsWith("budget expired;")) {
+      return "cancelling";
+    }
+    if (line.startsWith("turn cancelled")) {
+      return "cancelled";
+    }
+    if (line.startsWith("grok error:") || line.startsWith("failed:")) {
       return "failed";
     }
   }

@@ -22,6 +22,7 @@ function defaultState() {
     config: {
       stopReviewGate: false
     },
+    lastTaskSession: null,
     jobs: []
   };
 }
@@ -70,6 +71,8 @@ export function loadState(cwd) {
         ...defaultState().config,
         ...(parsed.config ?? {})
       },
+      lastTaskSession:
+        parsed.lastTaskSession && typeof parsed.lastTaskSession === "object" ? parsed.lastTaskSession : null,
       jobs: Array.isArray(parsed.jobs) ? parsed.jobs : []
     };
   } catch {
@@ -99,6 +102,8 @@ export function saveState(cwd, state) {
       ...defaultState().config,
       ...(state.config ?? {})
     },
+    lastTaskSession:
+      state.lastTaskSession && typeof state.lastTaskSession === "object" ? state.lastTaskSession : null,
     jobs: nextJobs
   };
 
@@ -161,6 +166,16 @@ export function setConfig(cwd, key, value) {
 
 export function getConfig(cwd) {
   return loadState(cwd).config;
+}
+
+export function getLastTaskSession(cwd) {
+  return loadState(cwd).lastTaskSession;
+}
+
+export function setLastTaskSession(cwd, session) {
+  return updateState(cwd, (state) => {
+    state.lastTaskSession = session;
+  });
 }
 
 export function writeJobFile(cwd, jobId, payload) {

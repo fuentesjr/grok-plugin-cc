@@ -103,7 +103,7 @@ function formatGrokResumeCommand(job) {
   if (!job?.threadId) {
     return null;
   }
-  return `grok resume ${job.threadId}`;
+  return "/grok:rescue --resume <follow-up request>";
 }
 
 function appendActiveJobsTable(lines, jobs) {
@@ -140,7 +140,7 @@ function pushJobDetails(lines, job, options = {}) {
   }
   const resumeCommand = formatGrokResumeCommand(job);
   if (resumeCommand) {
-    lines.push(`  Resume in Grok: ${resumeCommand}`);
+    lines.push(`  Resume with Grok: ${resumeCommand}`);
   }
   if (job.logFile && options.showLog) {
     lines.push(`  Log: ${job.logFile}`);
@@ -389,13 +389,13 @@ export function renderJobStatusReport(job) {
 
 export function renderStoredJobResult(job, storedJob) {
   const threadId = storedJob?.threadId ?? job.threadId ?? null;
-  const resumeCommand = threadId ? `grok resume ${threadId}` : null;
+  const resumeCommand = threadId ? "/grok:rescue --resume <follow-up request>" : null;
   if (isStructuredReviewStoredResult(storedJob) && storedJob?.rendered) {
     const output = storedJob.rendered.endsWith("\n") ? storedJob.rendered : `${storedJob.rendered}\n`;
     if (!threadId) {
       return output;
     }
-    return `${output}\nGrok session ID: ${threadId}\nResume in Grok: ${resumeCommand}\n`;
+    return `${output}\nGrok session ID: ${threadId}\nResume with Grok: ${resumeCommand}\n`;
   }
 
   const rawOutput =
@@ -407,7 +407,7 @@ export function renderStoredJobResult(job, storedJob) {
     if (!threadId) {
       return output;
     }
-    return `${output}\nGrok session ID: ${threadId}\nResume in Grok: ${resumeCommand}\n`;
+    return `${output}\nGrok session ID: ${threadId}\nResume with Grok: ${resumeCommand}\n`;
   }
 
   if (storedJob?.rendered) {
@@ -415,7 +415,7 @@ export function renderStoredJobResult(job, storedJob) {
     if (!threadId) {
       return output;
     }
-    return `${output}\nGrok session ID: ${threadId}\nResume in Grok: ${resumeCommand}\n`;
+    return `${output}\nGrok session ID: ${threadId}\nResume with Grok: ${resumeCommand}\n`;
   }
 
   const lines = [
@@ -427,7 +427,7 @@ export function renderStoredJobResult(job, storedJob) {
 
   if (threadId) {
     lines.push(`Grok session ID: ${threadId}`);
-    lines.push(`Resume in Grok: ${resumeCommand}`);
+    lines.push(`Resume with Grok: ${resumeCommand}`);
   }
 
   if (job.summary) {

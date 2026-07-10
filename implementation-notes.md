@@ -96,3 +96,22 @@ Verification:
 Open questions / residual risk:
 - `commands/setup.md`'s install-offer step (`curl -fsSL https://x.ai/cli/install.sh | bash`) is unverified against the actual `grok-companion.mjs setup` output shape (that script doesn't exist yet in my scope) — the wording assumes an "unavailable" signal shaped like the reference's; worth a re-check once `scripts/grok-companion.mjs setup` lands.
 - `prompts/review.md` and `prompts/task-brief.md` are static templates; nothing in my scope wires `{{PLACEHOLDER}}` interpolation — that's `scripts/lib/prompts.mjs`'s job (owned elsewhere per the porting map's "Verbatim ports" list).
+
+## Build log — slice 2 ACP runtime core (2026-07-10)
+
+- Added the fake Grok ACP fixture, direct/broker ACP client, rename-only broker lifecycle, ACP-backed `grok.mjs`, persisted task-session state, and runtime-core tests.
+
+| ACP event | Progress phrase | Phase |
+|---|---|---|
+| `agent_message_chunk` | buffered; `Assistant message captured: …` when `session/prompt` resolves | `finalizing` |
+| `agent_thought_chunk` | `Reasoning: …` | `investigating` |
+| command-like `tool_call` | `Running command: …` | `verifying` or `investigating` |
+| other `tool_call` | `Running tool: …` | `investigating` |
+| `tool_call_update` | `Command/Tool completed: …` or `… failed: …` | tool-dependent or `failed` |
+| `plan` | `Plan updated: …` | `planning` (`job-control` presents it as `investigating`) |
+| `session/prompt` result | `Turn completed (<stopReason>).` or `Turn cancelled.` | `finalizing` or `cancelled` |
+
+- Resume strategy: persist `{id, name, finalMessage, updatedAt}` as `lastTaskSession` in the per-workspace `state.json`; `--resume-last` creates a fresh ACP session seeded with the prior session ID, prior final message, and `DEFAULT_CONTINUE_PROMPT`. No unverified `session/load` call is used.
+- Lockstep wording: `job-control.mjs` now recognizes `Starting Grok …`, `Session ready`, reasoning/plan/tool phrases, `Grok error`, budget cancellation, and ACP log-block titles. Rendered resume hints now use `/grok:rescue --resume <follow-up request>` instead of claiming direct CLI session resume.
+- ACP deviations: ACP exposes no verified turn ID, so `turnId` remains `null`; cross-process `cancelAcpTurn` requires the shared broker, while direct client budget cancellation uses the active connection. Review schema enforcement is prompt-driven by embedding the schema because ACP has no output-schema parameter. Broker-socket end-to-end tests remain for slice 3; direct spawn and busy-to-direct mechanics are implemented now.
+- Verified: `npm test` — 41 passed, 0 failed.

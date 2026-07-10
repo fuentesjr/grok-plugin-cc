@@ -15,7 +15,7 @@ If the result says Grok Build is unavailable:
 - Use these two options:
   - `Install Grok Build (Recommended)`
   - `Skip for now`
-- If the user chooses install, run:
+- If the user chooses install, run xAI's official installer (this pipes a remote script into `bash`, so expect a permission prompt — that confirmation is intentional):
 
 ```bash
 curl -fsSL https://x.ai/cli/install.sh | bash
