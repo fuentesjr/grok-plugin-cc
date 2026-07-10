@@ -59,3 +59,40 @@ Phase 2 details deliberately un-grilled — grill them when Phase 1 ships.
 ## Open items
 
 - Verification status: nothing implemented yet; spike findings above are the only verified behavior.
+
+## Build log — slice 1 (2026-07-10)
+
+- Ported the transport-agnostic libs, Grok-branded `render.mjs`, `job-control.mjs`, the minimal slice-2 `grok.mjs` runtime-status stub, and the adapted reference tests.
+- Deliberate deviations: `state.test.mjs` clears ambient `CLAUDE_PLUGIN_DATA` for hermetic fallback-state coverage; `grok.mjs` is the requested TODO stub. The legacy `starting codex`/`codex error:` job-control phrases remain unchanged and must stay in lockstep with slice 2's progress wording.
+- Verified: `node --test tests/git.test.mjs tests/process.test.mjs tests/render.test.mjs tests/state.test.mjs` — 17 passed, 0 failed.
+
+## Build log — plugin surface (2026-07-10)
+
+Files created (all under `plugins/grok/` unless noted):
+- `commands/rescue.md`, `commands/review.md`, `commands/status.md`, `commands/cancel.md`, `commands/result.md`, `commands/setup.md`
+- `agents/grok-rescue.md`
+- `skills/grok-cli-runtime/SKILL.md`, `skills/grok-result-handling/SKILL.md`
+- `prompts/task-brief.md`, `prompts/review.md`
+- `schemas/review-output.schema.json` (byte-identical copy of the reference schema)
+- `hooks/hooks.json` (SessionStart + SessionEnd only, no Stop hook)
+- `LICENSE`, `NOTICE` (byte-identical copies of repo-root files)
+- `tests/commands.test.mjs` (self-contained; `tests/helpers.mjs` did not exist at write time, so no dependency on it)
+
+Deviations from the reference:
+- Dropped all `gpt-5-4-prompting`-equivalent skill wiring (`grok-rescue` agent has only `skills: [grok-cli-runtime]`) — that skill is explicitly Phase 2 (`grok-prompting`) per `implementation-notes.md`.
+- `commands/review.md` drops "native reviewer" framing (reference: "Run a Codex review through the shared built-in reviewer") since Grok has no native reviewer — reworded to "Run a Grok Build review through the grok-companion review runtime." Also dropped the reference's pointer to `/codex:adversarial-review` (no such command in Phase 1).
+- `prompts/review.md` adapts the reference `prompts/adversarial-review.md` (the only review-prompt template in the reference) but drops "adversarial" branding/wording per the task brief, since Grok has one review path, not a separate adversarial command — kept the same rigor (skepticism, attack surface, grounding rules) under neutral "software review" framing.
+- `commands/setup.md`: dropped the reference's `--enable-review-gate|--disable-review-gate` argument-hint and toggle guidance (Phase 1 has no Stop hook / review gate). Replaced the reference's `npm install -g @openai/codex` install step with grok's actual installer (`curl -fsSL https://x.ai/cli/install.sh | bash`, from `~/.grok/docs/user-guide/01-getting-started.md`) since the npm path is factually wrong for Grok — same AskUserQuestion idiom, corrected command.
+- `commands/status.md` description drops "including review-gate status" (Phase 2 feature, not present).
+- Model alias is `fast` → `grok-composer-2.5-fast` everywhere (never `spark`), per the task brief.
+- `hooks/hooks.json` has no `Stop` entry and no `stop-review-gate-hook.mjs` reference, matching the Phase 1 scope in `docs/porting-map.md`.
+- `tests/commands.test.mjs` is a from-scratch adaptation of the reference test file (which asserts on `adversarial-review.md`/`transfer.md`, absent here) rather than a line-by-line port; it asserts the Phase 1 command set, frontmatter, verbatim-output rules, trust-but-verify/failure-policy language in `grok-result-handling`, and the hooks/schema/LICENSE shape instead.
+
+Verification:
+- `node --test tests/commands.test.mjs` — 11 passed, 0 failed.
+- `node --test tests/*.test.mjs` (full suite, includes the parallel worker's lib tests) — 28 passed, 0 failed, no conflicts.
+- `diff` confirmed `schemas/review-output.schema.json`, `LICENSE`, and `NOTICE` are byte-identical to their source-of-truth copies.
+
+Open questions / residual risk:
+- `commands/setup.md`'s install-offer step (`curl -fsSL https://x.ai/cli/install.sh | bash`) is unverified against the actual `grok-companion.mjs setup` output shape (that script doesn't exist yet in my scope) — the wording assumes an "unavailable" signal shaped like the reference's; worth a re-check once `scripts/grok-companion.mjs setup` lands.
+- `prompts/review.md` and `prompts/task-brief.md` are static templates; nothing in my scope wires `{{PLACEHOLDER}}` interpolation — that's `scripts/lib/prompts.mjs`'s job (owned elsewhere per the porting map's "Verbatim ports" list).
