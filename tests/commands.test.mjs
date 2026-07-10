@@ -235,6 +235,29 @@ test("task-brief prompt carries the brief placeholders", () => {
   assert.match(taskBrief, /\{\{VERIFICATION_COMMAND\}\}/);
 });
 
+test("setup command installer uses official x.ai curl invocation, not npm", () => {
+  const setup = read("commands/setup.md");
+
+  assert.match(setup, /curl -fsSL https:\/\/x\.ai\/cli\/install\.sh \| bash/);
+  assert.doesNotMatch(setup, /npm install/i);
+});
+
+test("grok-rescue and grok-cli-runtime default to --write unless user asks for read-only", () => {
+  const rescue = read("agents/grok-rescue.md");
+  const runtime = read("skills/grok-cli-runtime/SKILL.md");
+
+  assert.match(rescue, /Default to a write-capable Grok run by adding `--write`/);
+  assert.match(runtime, /Default to a write-capable Grok run by adding `--write`/);
+});
+
+test("hooks.json command strings contain CLAUDE_PLUGIN_ROOT for both SessionStart and SessionEnd", () => {
+  const source = read("hooks/hooks.json");
+  const parsed = JSON.parse(source);
+
+  assert.match(parsed.hooks.SessionStart[0].hooks[0].command, /\$\{CLAUDE_PLUGIN_ROOT\}/);
+  assert.match(parsed.hooks.SessionEnd[0].hooks[0].command, /\$\{CLAUDE_PLUGIN_ROOT\}/);
+});
+
 test("LICENSE and NOTICE are duplicated byte-identical into the plugin directory", () => {
   const rootLicense = fs.readFileSync(path.join(ROOT, "LICENSE"), "utf8");
   const rootNotice = fs.readFileSync(path.join(ROOT, "NOTICE"), "utf8");

@@ -92,6 +92,12 @@ function removeFileIfExists(filePath) {
   }
 }
 
+function writeStateFileAtomic(filePath, value) {
+  const tempFile = `${filePath}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  fs.writeFileSync(tempFile, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  fs.renameSync(tempFile, filePath);
+}
+
 export function saveState(cwd, state) {
   const previousJobs = loadState(cwd).jobs;
   ensureStateDir(cwd);
@@ -116,7 +122,7 @@ export function saveState(cwd, state) {
     removeFileIfExists(job.logFile);
   }
 
-  fs.writeFileSync(resolveStateFile(cwd), `${JSON.stringify(nextState, null, 2)}\n`, "utf8");
+  writeStateFileAtomic(resolveStateFile(cwd), nextState);
   return nextState;
 }
 

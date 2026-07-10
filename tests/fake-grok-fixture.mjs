@@ -261,6 +261,9 @@ input.on("line", (line) => {
         sessionId,
         cwd: message.params.cwd,
         mcpServers: message.params.mcpServers,
+        sandboxProfile: parsedArgs.sandboxProfile,
+        model: parsedArgs.model,
+        effort: parsedArgs.effort,
         rules: message.params._meta && message.params._meta.rules,
         meta: message.params._meta || null
       });

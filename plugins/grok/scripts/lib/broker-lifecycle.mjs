@@ -13,7 +13,9 @@ export const LOG_FILE_ENV = "GROK_COMPANION_ACP_LOG_FILE";
 const BROKER_STATE_FILE = "broker.json";
 
 export function createBrokerSessionDir(prefix = "gxc-") {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const runtimeDir = process.env.GROK_COMPANION_RUNTIME_DIR ?? os.tmpdir();
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  return fs.mkdtempSync(path.join(runtimeDir, prefix));
 }
 
 function connectToEndpoint(endpoint) {

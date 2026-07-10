@@ -9,6 +9,7 @@ import { terminateProcessTree } from "./process.mjs";
 
 export const BROKER_ENDPOINT_ENV = "GROK_COMPANION_ACP_ENDPOINT";
 export const BROKER_BUSY_RPC_CODE = -32001;
+export const BROKER_SESSION_META_KEY = "grokCompanion";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
 const STDERR_TAIL_MAX_BYTES = 16 * 1024;
@@ -233,8 +234,7 @@ class SpawnedGrokAcpClient extends AcpClientBase {
       env: this.options.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32" ? (process.env.SHELL || true) : false,
-      windowsHide: true,
-      detached: process.platform !== "win32"
+      windowsHide: true
     });
 
     this.proc.stdout.setEncoding("utf8");
@@ -278,7 +278,10 @@ class SpawnedGrokAcpClient extends AcpClientBase {
           return;
         }
         try {
-          terminateProcessTree(this.proc.pid);
+          const outcome = terminateProcessTree(this.proc.pid);
+          if (!outcome.delivered) {
+            this.proc.kill("SIGTERM");
+          }
         } catch {
           this.proc.kill("SIGTERM");
         }

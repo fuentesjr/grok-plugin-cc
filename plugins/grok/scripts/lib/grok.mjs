@@ -2,7 +2,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { BROKER_ENDPOINT_ENV, GrokAcpClient } from "./acp-client.mjs";
+import { BROKER_ENDPOINT_ENV, BROKER_SESSION_META_KEY, GrokAcpClient } from "./acp-client.mjs";
 import { loadBrokerSession } from "./broker-lifecycle.mjs";
 import { readJsonFile } from "./fs.mjs";
 import { binaryAvailable } from "./process.mjs";
@@ -113,10 +113,14 @@ function standingRules(cwd) {
 
 function buildSessionMeta(cwd, options = {}) {
   const extraRules = typeof options.rules === "string" && options.rules.trim() ? `\n${options.rules.trim()}` : "";
-  return {
+  const meta = {
     ...(options.sessionMeta ?? {}),
     rules: `${standingRules(cwd)}${extraRules}`
   };
+  if (options.brokerRouting) {
+    meta[BROKER_SESSION_META_KEY] = options.brokerRouting;
+  }
+  return meta;
 }
 
 function buildPromptInput(prompt) {
@@ -484,7 +488,18 @@ export async function runAcpTurn(cwd, options = {}) {
       const session = await client.request("session/new", {
         cwd,
         mcpServers: options.mcpServers ?? [],
-        _meta: buildSessionMeta(cwd, options)
+        _meta: buildSessionMeta(cwd, {
+          ...options,
+          brokerRouting:
+            client.transport === "broker"
+              ? {
+                  access: sandbox,
+                  ...(Number.isFinite(options.budgetMs) && options.budgetMs > 0
+                    ? { budgetMs: Math.floor(options.budgetMs) }
+                    : {})
+                }
+              : null
+        })
       });
       const threadId = session.sessionId;
       if (!threadId) {

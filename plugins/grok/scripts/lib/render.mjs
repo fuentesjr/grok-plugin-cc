@@ -153,7 +153,6 @@ function pushJobDetails(lines, job, options = {}) {
   }
   if (job.status !== "queued" && job.status !== "running" && job.jobClass === "task" && job.write && options.showReviewHint) {
     lines.push("  Review changes: /grok:review --wait");
-    lines.push("  Stricter review: /grok:adversarial-review --wait");
   }
   if (job.progressPreview?.length) {
     lines.push("  Progress:");
@@ -182,11 +181,9 @@ export function renderSetupReport(report) {
     "",
     "Checks:",
     `- node: ${report.node.detail}`,
-    `- npm: ${report.npm.detail}`,
     `- grok: ${report.grok.detail}`,
     `- auth: ${report.auth.detail}`,
     `- session runtime: ${report.sessionRuntime.label}`,
-    `- review gate: ${report.reviewGateEnabled ? "enabled" : "disabled"}`,
     ""
   ];
 
@@ -327,7 +324,6 @@ export function renderStatusReport(report) {
     "# Grok Status",
     "",
     `Session runtime: ${report.sessionRuntime.label}`,
-    `Review gate: ${report.config.stopReviewGate ? "enabled" : "disabled"}`,
     ""
   ];
 
@@ -364,11 +360,6 @@ export function renderStatusReport(report) {
     lines.push("");
   } else if (report.running.length === 0 && !report.latestFinished) {
     lines.push("No jobs recorded yet.", "");
-  }
-
-  if (report.needsReview) {
-    lines.push("The stop-time review gate is enabled.");
-    lines.push("Ending the session will trigger a fresh Grok adversarial review and block if it finds issues.");
   }
 
   return `${lines.join("\n").trimEnd()}\n`;

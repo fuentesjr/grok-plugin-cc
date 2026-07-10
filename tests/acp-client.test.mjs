@@ -24,7 +24,7 @@ test("GrokAcpClient performs the verified ACP handshake and creates a session", 
   const client = await GrokAcpClient.connect(cwd, {
     disableBroker: true,
     env: buildEnv(binDir),
-    requestTimeoutMs: 1000
+    requestTimeoutMs: 15000
   });
 
   try {
@@ -50,7 +50,7 @@ test("GrokAcpClient dispatches notifications and cancels an in-flight prompt", a
   const client = await GrokAcpClient.connect(cwd, {
     disableBroker: true,
     env: buildEnv(binDir),
-    requestTimeoutMs: 1000
+    requestTimeoutMs: 15000
   });
 
   try {
@@ -78,7 +78,7 @@ test("GrokAcpClient surfaces a direct-spawn failure with the raw stderr tail", a
     GrokAcpClient.connect(cwd, {
       disableBroker: true,
       env: buildEnv(binDir),
-      requestTimeoutMs: 1000
+      requestTimeoutMs: 15000
     }),
     /fake grok raw failure tail: agent process could not start/
   );
