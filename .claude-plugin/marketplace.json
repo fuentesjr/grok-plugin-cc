@@ -1,0 +1,21 @@
+{
+  "name": "grok",
+  "owner": {
+    "name": "Salvador Fuentes Jr."
+  },
+  "metadata": {
+    "description": "Grok plugins to use in Claude Code for delegation to Grok Build (xAI's grok CLI) and code review.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "grok",
+      "description": "Use Grok Build from Claude Code to review code or delegate tasks.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Salvador Fuentes Jr."
+      },
+      "source": "./plugins/grok"
+    }
+  ]
+}

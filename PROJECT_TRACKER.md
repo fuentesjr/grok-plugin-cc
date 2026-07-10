@@ -5,8 +5,8 @@ Working checklist for building the plugin. Decisions live in `implementation-not
 ## Phase 0 — Bootstrap
 
 - [x] `git init`, first commit of docs (CONTEXT.md, ADRs, notes, this tracker)
-- [ ] Repo skeleton: root `package.json` (Node ≥18, `node --test`), `LICENSE` (Apache-2.0), `NOTICE` crediting openai/codex-plugin-cc
-- [ ] `.claude-plugin/marketplace.json` → `plugins/grok/.claude-plugin/plugin.json`
+- [x] Repo skeleton: root `package.json` (Node ≥18, `node --test`), `LICENSE` (Apache-2.0), `NOTICE` crediting openai/codex-plugin-cc
+- [x] `.claude-plugin/marketplace.json` → `plugins/grok/.claude-plugin/plugin.json`
 
 ## Phase 1 — Core loop
 
