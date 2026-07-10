@@ -58,7 +58,14 @@ Phase 2 details deliberately un-grilled — grill them when Phase 1 ships.
 
 ## Open items
 
-- Verification status: nothing implemented yet; spike findings above are the only verified behavior.
+- Remaining for Phase 1 sign-off: install as local marketplace and exercise `/grok:*` from a live Claude Code session; a real background **write** job end-to-end (guard paths are hermetically tested; the live write run is reserved for Sal).
+- Known accepted debt from the 2026-07-10 runtime review: unix-socket perms rely on the 0700 mkdtemp dir (matches reference; fine on macOS per-user TMPDIR); jobs dispatched without `GROK_COMPANION_SESSION_ID` are not swept by SessionEnd cleanup (edge case — the hook always sets it in real installs).
+- Operational gotcha: the broker daemon persists per session and holds loaded code — after upgrading plugin code, restart the broker (SessionEnd or kill + remove `broker.json`) or jobs keep hitting the old behavior.
+
+## Verification status (2026-07-10, Phase 1)
+
+- Hermetic: `node --test tests/*.test.mjs` — **63/63** on macOS (codex's build sandbox skips 4 socket-gated broker tests; they pass on the host).
+- Live against `grok` 0.2.93: setup/auth via real ACP handshake ✓; read-only rescue ✓; prompt-driven review on a planted-bug diff returned schema-valid JSON with the bug found (`parseError: null`) ✓; background job ran past 120s after the flat-timeout fix ✓; mid-turn cancel honored (`turnInterrupted: true`) ✓; status/result round-trips ✓; dirty-tree refusal for background+write ✓; no orphaned grok processes after cancel ✓.
 
 ## Build log — slice 1 (2026-07-10)
 
