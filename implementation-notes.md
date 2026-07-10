@@ -137,3 +137,9 @@ Open questions / residual risk:
 - Orphan hygiene: broker-owned work is cancelled when its owning socket disappears. Direct Grok is a separate process-group leader, `close()` terminates that group, and active direct-child PIDs are persisted so cancel/session teardown can sweep the child group even after its worker dies.
 - Minor cleanup: removed the unused `requiresOpenaiAuth` setup-auth field.
 - Verified: `node --test tests/*.test.mjs` — 63 tests total, 59 passed, 0 failed, 4 skipped. The skipped cases require Unix sockets, which this execution sandbox blocks; the broker ownership/disconnect regressions are included and capability-gated.
+
+## Build log — setup version drift (2026-07-10)
+
+- Successful setup verification persists `config.lastVerifiedGrokVersion` per workspace without pinning the CLI. Setup compares the stored and reported strings before advancing the stored value, emits `versionDrift: { previous, current }` plus a prominent warning on change, and leaves the stored version untouched when availability/auth verification fails.
+- The fake Grok version is overridable through `FAKE_GROK_VERSION`; runtime coverage verifies first storage, JSON and human drift warnings, failed-auth retention, successful advancement, and one-time clearing. Setup command guidance now requires Claude to surface drift prominently.
+- Verified: `node --test tests/*.test.mjs` — 64 tests total, 60 passed, 0 failed, 4 skipped because this sandbox blocks Unix socket listeners.

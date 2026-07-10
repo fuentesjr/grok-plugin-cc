@@ -32,5 +32,6 @@ If Grok Build is already installed:
 
 Output rules:
 - Present the final setup output to the user.
+- If a Grok version-drift warning is present, surface it prominently with both versions and the read-only `/grok:rescue` re-verification guidance.
 - If installation was skipped, present the original setup output.
 - If Grok Build is installed but not authenticated, preserve the guidance to run `!grok login`.

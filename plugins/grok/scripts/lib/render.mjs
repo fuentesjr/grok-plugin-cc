@@ -178,14 +178,25 @@ export function renderSetupReport(report) {
     "# Grok Setup",
     "",
     `Status: ${report.ready ? "ready" : "needs attention"}`,
-    "",
+    ""
+  ];
+
+  if (report.warnings.length > 0) {
+    lines.push("Version drift warning:");
+    for (const warning of report.warnings) {
+      lines.push(`- ${warning}`);
+    }
+    lines.push("");
+  }
+
+  lines.push(
     "Checks:",
     `- node: ${report.node.detail}`,
     `- grok: ${report.grok.detail}`,
     `- auth: ${report.auth.detail}`,
     `- session runtime: ${report.sessionRuntime.label}`,
     ""
-  ];
+  );
 
   if (report.actionsTaken.length > 0) {
     lines.push("Actions taken:");

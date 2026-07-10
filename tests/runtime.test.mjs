@@ -150,6 +150,49 @@ test("setup --json reports happy-path, logged-out, and missing-binary states", a
   });
 });
 
+test("setup stores verified Grok versions and reports one-time version drift", () => {
+  const { binDir, cwd, env } = setupFake("task-ok");
+  env.FAKE_GROK_VERSION = "grok 0.2.93";
+
+  const first = jsonOutput(runCompanion(["setup", "--json", "-C", cwd], { cwd, env }));
+  assert.equal(first.ready, true);
+  assert.equal(first.versionDrift, null);
+  assert.deepEqual(first.warnings, []);
+  assert.equal(loadState(cwd).config.lastVerifiedGrokVersion, "grok 0.2.93");
+
+  env.FAKE_GROK_VERSION = "grok 0.3.0";
+  installFakeGrok(binDir, "auth-required");
+  const failed = jsonOutput(runCompanion(["setup", "--json", "-C", cwd], { cwd, env }));
+  assert.equal(failed.ready, false);
+  assert.deepEqual(failed.versionDrift, {
+    previous: "grok 0.2.93",
+    current: "grok 0.3.0"
+  });
+  assert.match(failed.warnings.join("\n"), /last verified against grok 0\.2\.93/i);
+  assert.match(failed.warnings.join("\n"), /\/grok:rescue/);
+  assert.equal(loadState(cwd).config.lastVerifiedGrokVersion, "grok 0.2.93");
+
+  const rendered = runCompanion(["setup", "-C", cwd], { cwd, env });
+  assert.equal(rendered.status, 0, rendered.stderr);
+  assert.match(rendered.stdout, /Version drift warning:/);
+  assert.match(rendered.stdout, /grok 0\.2\.93/);
+  assert.match(rendered.stdout, /grok 0\.3\.0/);
+  assert.match(rendered.stdout, /\/grok:rescue/);
+
+  installFakeGrok(binDir, "task-ok");
+  const changed = jsonOutput(runCompanion(["setup", "--json", "-C", cwd], { cwd, env }));
+  assert.equal(changed.ready, true);
+  assert.deepEqual(changed.versionDrift, {
+    previous: "grok 0.2.93",
+    current: "grok 0.3.0"
+  });
+  assert.equal(loadState(cwd).config.lastVerifiedGrokVersion, "grok 0.3.0");
+
+  const cleared = jsonOutput(runCompanion(["setup", "--json", "-C", cwd], { cwd, env }));
+  assert.equal(cleared.versionDrift, null);
+  assert.deepEqual(cleared.warnings, []);
+});
+
 test("foreground task stores its result, job record, and progress log", async (t) => {
   const { cwd, env } = setupFake("task-ok");
   t.after(() => cleanupBroker(cwd));

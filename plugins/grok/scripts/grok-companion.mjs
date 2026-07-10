@@ -44,7 +44,7 @@ import {
   renderStoredJobResult,
   renderTaskResult
 } from "./lib/render.mjs";
-import { generateJobId, listJobs, upsertJob, writeJobFile } from "./lib/state.mjs";
+import { generateJobId, getConfig, listJobs, setConfig, upsertJob, writeJobFile } from "./lib/state.mjs";
 import {
   appendLogLine,
   createJobLogFile,
@@ -175,20 +175,37 @@ function ensureGrokAvailable(cwd) {
 
 async function buildSetupReport(cwd) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  const previousVersion = getConfig(workspaceRoot).lastVerifiedGrokVersion ?? null;
   const nodeStatus = binaryAvailable("node", ["--version"], { cwd });
   const grokStatus = getGrokAvailability(cwd);
   const authStatus = await getGrokAuthStatus(cwd);
+  const currentVersion = grokStatus.available ? grokStatus.detail : null;
+  const versionDrift =
+    previousVersion && currentVersion && previousVersion !== currentVersion
+      ? { previous: previousVersion, current: currentVersion }
+      : null;
+  const warnings = versionDrift
+    ? [
+        `Grok is now ${versionDrift.current}; plugin behavior was last verified against ${versionDrift.previous}. Run one cheap read-only /grok:rescue to re-verify behavior.`
+      ]
+    : [];
   const nextSteps = [];
   if (!grokStatus.available) {
     nextSteps.push("Install Grok Build, then rerun `/grok:setup`.");
   } else if (!authStatus.loggedIn) {
     nextSteps.push("Run `grok login`, then rerun `/grok:setup`.");
   }
+  const ready = nodeStatus.available && grokStatus.available && authStatus.loggedIn;
+  if (ready) {
+    setConfig(workspaceRoot, "lastVerifiedGrokVersion", currentVersion);
+  }
   return {
-    ready: nodeStatus.available && grokStatus.available && authStatus.loggedIn,
+    ready,
     node: nodeStatus,
     grok: grokStatus,
     auth: authStatus,
+    versionDrift,
+    warnings,
     sessionRuntime: getSessionRuntimeStatus(process.env, workspaceRoot),
     actionsTaken: [],
     nextSteps

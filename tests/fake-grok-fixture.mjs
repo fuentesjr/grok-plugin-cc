@@ -105,7 +105,7 @@ const state = loadState();
 if (args.length === 1 && args[0] === "--version") {
   state.spawns.push({ mode: "version", args });
   saveState(state);
-  process.stdout.write("grok 0.2.93\\n");
+  process.stdout.write((process.env.FAKE_GROK_VERSION || "grok 0.2.93") + "\\n");
   process.exit(0);
 }
 
