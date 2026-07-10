@@ -36,7 +36,7 @@ Pre-verified by live ACP spike (2026-07-09): process-level sandbox enforcement, 
 - [x] Hermetic suite green (`node --test`) — 63/63 including socket-gated broker tests (2026-07-10)
 - [x] `/grok:setup` passes against real `grok` 0.2.93 (companion `setup --json`: ready, auth verified via live ACP handshake)
 - [x] Manual end-to-end: real `/grok:rescue` (read-only) and `/grok:review` on a sample diff; `/grok:status`/`/grok:result` round-trip; cancel a hanging job; write job blocked on dirty tree when backgrounded — all via companion CLI (2026-07-10; found and fixed the session/prompt flat-timeout bug in the process)
-- [ ] Install as local marketplace in Claude Code and exercise the commands from a session (reserved for Sal)
+- [x] Install as local marketplace in Claude Code and exercise the commands from a session (Sal, 2026-07-10, session 46e89803 in ~/Projects/ctxpack: setup ready + version persisted, rescue via grok-rescue subagent completed read-only, status/result round-trip, hook-exported session id confirmed in job records). Outstanding: one live background **write** job.
 - [x] Update `implementation-notes.md` verification status
 
 ## Phase 2 — Parity (grill before starting)
