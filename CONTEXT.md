@@ -1,6 +1,6 @@
 # CONTEXT
 
-Glossary of terms for the grok-agent-plugin domain. Terms are canonical — use them exactly as defined.
+Glossary of terms for the grok-plugin-cc domain. Terms are canonical — use them exactly as defined.
 
 ## Terms
 
