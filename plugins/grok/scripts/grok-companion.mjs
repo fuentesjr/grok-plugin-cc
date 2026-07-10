@@ -18,6 +18,7 @@ import {
   buildPersistentTaskThreadName,
   cancelAcpTurn,
   DEFAULT_CONTINUE_PROMPT,
+  DEFAULT_JOB_BUDGET_MS,
   findLatestTaskThread,
   getGrokAuthStatus,
   getGrokAvailability,
@@ -103,7 +104,13 @@ function normalizeEffort(effort) {
 function normalizeBudgetMs(value) {
   if (value == null || value === "") {
     const fromEnv = Number(process.env.GROK_COMPANION_BUDGET_MS);
-    return Number.isFinite(fromEnv) && fromEnv > 0 ? Math.floor(fromEnv) : null;
+    if (Number.isFinite(fromEnv) && fromEnv > 0) {
+      return Math.floor(fromEnv);
+    }
+    const testDefault = Number(process.env.GROK_COMPANION_TEST_DEFAULT_BUDGET_MS);
+    return Number.isFinite(testDefault) && testDefault > 0
+      ? Math.floor(testDefault)
+      : DEFAULT_JOB_BUDGET_MS;
   }
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -288,6 +295,7 @@ async function executeReviewRun(request) {
     reviewInput: context.content,
     reviewCollectionGuidance: context.collectionGuidance,
     model: request.model,
+    budgetMs: request.budgetMs,
     onProgress: request.onProgress
   });
   const parsed = result.result;
@@ -332,7 +340,7 @@ async function executeReviewRun(request) {
 
 async function handleReview(argv) {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["base", "scope", "model", "cwd"],
+    valueOptions: ["base", "scope", "model", "cwd", "budget-ms"],
     booleanOptions: ["json", "background", "wait"],
     aliasMap: { m: "model" }
   });
@@ -358,6 +366,7 @@ async function handleReview(argv) {
         base: options.base,
         scope: options.scope,
         model: normalizeRequestedModel(options.model),
+        budgetMs: normalizeBudgetMs(options["budget-ms"]),
         jobId: job.id,
         onProgress: progress
       }),
@@ -401,6 +410,8 @@ async function executeTaskRun(request) {
     effort: request.effort,
     sandbox: request.write ? "workspace" : "read-only",
     budgetMs: request.budgetMs,
+    onProcessSpawn: (childPid) => updateJobChildPid(workspaceRoot, request.jobId, childPid),
+    onProcessExit: () => updateJobChildPid(workspaceRoot, request.jobId, null),
     onProgress: request.onProgress,
     persistThread: true,
     threadName: resumeThreadId
@@ -429,6 +440,14 @@ async function executeTaskRun(request) {
     jobClass: "task",
     write: Boolean(request.write)
   };
+}
+
+function updateJobChildPid(workspaceRoot, jobId, childPid) {
+  const storedJob = readStoredJob(workspaceRoot, jobId);
+  if (storedJob) {
+    writeJobFile(workspaceRoot, jobId, { ...storedJob, childPid });
+  }
+  upsertJob(workspaceRoot, { id: jobId, childPid });
 }
 
 function spawnDetachedTaskWorker(cwd, jobId) {
@@ -680,6 +699,11 @@ async function handleCancel(argv) {
   } catch {
     // State cancellation remains authoritative if the worker already exited.
   }
+  try {
+    terminateProcessTree(existing.childPid ?? job.childPid ?? Number.NaN);
+  } catch {
+    // State cancellation remains authoritative if the direct child already exited.
+  }
   appendLogLine(job.logFile, "Cancelled by user.");
   const completedAt = nowIso();
   const nextJob = {
@@ -687,6 +711,7 @@ async function handleCancel(argv) {
     status: "cancelled",
     phase: "cancelled",
     pid: null,
+    childPid: null,
     completedAt,
     errorMessage: "Cancelled by user."
   };
@@ -696,6 +721,7 @@ async function handleCancel(argv) {
     status: "cancelled",
     phase: "cancelled",
     pid: null,
+    childPid: null,
     errorMessage: "Cancelled by user.",
     completedAt
   });

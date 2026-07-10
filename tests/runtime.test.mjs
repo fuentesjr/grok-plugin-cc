@@ -126,6 +126,7 @@ test("setup --json reports happy-path, logged-out, and missing-binary states", a
     assert.equal(payload.ready, true);
     assert.equal(payload.grok.available, true);
     assert.equal(payload.auth.loggedIn, true);
+    assert.equal(Object.hasOwn(payload.auth, "requiresOpenaiAuth"), false);
   });
 
   await t.test("auth required", () => {
@@ -210,15 +211,16 @@ test("cancel stops a hanging background task and preserves its log", async (t) =
   assert.match(fs.readFileSync(job.logFile, "utf8"), /Cancelled by user/);
 });
 
-test("budget expiry marks a background job failed and preserves its log", async (t) => {
+test("default budget cancels a background job when no budget flag or public override is supplied", async (t) => {
   const { cwd, env } = setupFake("hanging");
+  env.GROK_COMPANION_TEST_DEFAULT_BUDGET_MS = "60";
   t.after(() => cleanupBroker(cwd));
 
   const launch = jsonOutput(
-    runCompanion(
-      ["task", "--background", "--budget-ms", "60", "--json", "-C", cwd, "Exceed", "budget"],
-      { cwd, env }
-    )
+    runCompanion(["task", "--background", "--json", "-C", cwd, "Exceed", "default", "budget"], {
+      cwd,
+      env
+    })
   );
   const snapshot = jsonOutput(
     runCompanion(
@@ -229,6 +231,8 @@ test("budget expiry marks a background job failed and preserves its log", async 
   assert.equal(snapshot.job.status, "failed");
   assert.equal(fs.existsSync(snapshot.job.logFile), true);
   assert.match(fs.readFileSync(snapshot.job.logFile, "utf8"), /Turn cancelled|Budget expired/);
+  const stored = JSON.parse(fs.readFileSync(resolveJobFile(cwd, launch.jobId), "utf8"));
+  assert.equal(stored.request.budgetMs, 60);
 });
 
 test("background write refuses dirty trees and runs on a clean tree", async (t) => {
@@ -363,10 +367,13 @@ test("broker enforces busy-lock while always admitting session/cancel", async (t
     (error) => error.rpcCode === BROKER_BUSY_RPC_CODE
   );
   second.notify("session/cancel", { sessionId: session.sessionId });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(readFakeGrokState(binDir).cancellations.length, 0);
+  first.notify("session/cancel", { sessionId: session.sessionId });
   assert.deepEqual(await prompt, { stopReason: "cancelled" });
 });
 
-test("broker budget cancels a prompt after its client disconnects and broker/shutdown removes the socket", async (t) => {
+test("broker disconnect cancels the orphaned prompt and releases busy ownership", async (t) => {
   if (!(await requireUnixSockets(t))) {
     return;
   }
@@ -384,7 +391,7 @@ test("broker budget cancels a prompt after its client disconnects and broker/shu
     mcpServers: [],
     _meta: {
       rules: "stay in workspace",
-      [BROKER_SESSION_META_KEY]: { access: "read-only", budgetMs: 60 }
+      [BROKER_SESSION_META_KEY]: { access: "read-only", budgetMs: 5000 }
     }
   });
   const prompt = client
@@ -397,6 +404,19 @@ test("broker budget cancels a prompt after its client disconnects and broker/shu
   await client.close();
   await prompt;
   await waitFor(() => readFakeGrokState(binDir)?.cancellations?.length === 1);
+
+  const nextClient = await GrokAcpClient.connect(cwd, {
+    brokerEndpoint: broker.endpoint,
+    brokerFallback: false,
+    env
+  });
+  const nextSession = await nextClient.request("session/new", {
+    cwd,
+    mcpServers: [],
+    _meta: { [BROKER_SESSION_META_KEY]: { access: "read-only" } }
+  });
+  assert.ok(nextSession.sessionId);
+  await nextClient.close();
 
   await sendBrokerShutdown(broker.endpoint);
   const target = parseBrokerEndpoint(broker.endpoint);

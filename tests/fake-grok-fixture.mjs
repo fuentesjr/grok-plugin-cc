@@ -9,6 +9,7 @@ export function installFakeGrok(binDir, behavior = "task-ok") {
   const scriptPath = path.join(binDir, "grok");
   const source = `#!/usr/bin/env node
 const fs = require("node:fs");
+const { spawn } = require("node:child_process");
 const readline = require("node:readline");
 
 const STATE_PATH = ${JSON.stringify(statePath)};
@@ -22,7 +23,8 @@ function defaultState() {
     initializations: [],
     sessions: [],
     prompts: [],
-    cancellations: []
+    cancellations: [],
+    agentProcesses: []
   };
 }
 
@@ -121,6 +123,14 @@ if (BEHAVIOR === "spawn-fail") {
   process.exit(23);
 }
 
+if (BEHAVIOR === "process-group-hanging") {
+  const descendant = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore"
+  });
+  state.agentProcesses.push({ pid: process.pid, descendantPid: descendant.pid });
+  saveState(state);
+}
+
 function authError(id) {
   send({
     id,
@@ -210,6 +220,12 @@ function handlePrompt(message) {
         content: { type: "text", text }
       });
     }
+  } else if (BEHAVIOR === "delayed") {
+    setTimeout(() => {
+      emitCompletingTurn(sessionId, ["Delayed ", "completion."]);
+      send({ id: message.id, result: { stopReason: "end_turn" } });
+    }, 300);
+    return;
   } else {
     emitCompletingTurn(sessionId, ["Task ", "completed."]);
   }

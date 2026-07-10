@@ -15,6 +15,7 @@ const FAST_MODEL_ALIAS = "grok-composer-2.5-fast";
 const TASK_THREAD_PREFIX = "Grok Companion Task";
 const DEFAULT_CONTINUE_PROMPT =
   "Continue from the prior task context. Pick the next highest-value step and follow through until the task is resolved.";
+export const DEFAULT_JOB_BUDGET_MS = 20 * 60 * 1000;
 
 function shorten(text, limit = 96) {
   const normalized = String(text ?? "").trim().replace(/\s+/g, " ");
@@ -314,7 +315,6 @@ function buildAuthStatus(fields = {}) {
     source: "acp",
     authMethod: null,
     verified: null,
-    requiresOpenaiAuth: null,
     provider: "xai",
     ...fields
   };
@@ -454,6 +454,10 @@ export async function runAcpTurn(cwd, options = {}) {
 
   const model = normalizeModel(options.model);
   const sandbox = normalizeSandbox(options.sandbox);
+  const budgetMs =
+    Number.isFinite(options.budgetMs) && options.budgetMs > 0
+      ? Math.floor(options.budgetMs)
+      : DEFAULT_JOB_BUDGET_MS;
   const forceDirect = Boolean(model || options.effort);
   const previousSession = options.resumeThreadId ? getLastTaskSession(cwd) : null;
   const effectivePrompt = options.resumeThreadId
@@ -482,7 +486,9 @@ export async function runAcpTurn(cwd, options = {}) {
       initializeTimeoutMs: options.initializeTimeoutMs,
       sandbox,
       model,
-      effort: options.effort ?? null
+      effort: options.effort ?? null,
+      onSpawn: options.onProcessSpawn,
+      onExit: options.onProcessExit
     },
     async (client) => {
       const session = await client.request("session/new", {
@@ -494,9 +500,7 @@ export async function runAcpTurn(cwd, options = {}) {
             client.transport === "broker"
               ? {
                   access: sandbox,
-                  ...(Number.isFinite(options.budgetMs) && options.budgetMs > 0
-                    ? { budgetMs: Math.floor(options.budgetMs) }
-                    : {})
+                  budgetMs
                 }
               : null
         })
@@ -507,7 +511,7 @@ export async function runAcpTurn(cwd, options = {}) {
       }
       emitProgress(options.onProgress, `Session ready (${threadId}).`, "starting", { threadId });
 
-      const turn = await capturePrompt(client, threadId, effectivePrompt, options);
+      const turn = await capturePrompt(client, threadId, effectivePrompt, { ...options, budgetMs });
       if (options.persistThread) {
         setLastTaskSession(cwd, {
           id: threadId,

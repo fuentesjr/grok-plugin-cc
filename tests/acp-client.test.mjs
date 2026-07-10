@@ -17,6 +17,19 @@ async function waitForState(binDir, predicate, timeoutMs = 1000) {
   throw new Error("Timed out waiting for fake Grok state.");
 }
 
+async function waitForProcessExit(pid, timeoutMs = 3000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Process ${pid} did not exit.`);
+}
+
 test("GrokAcpClient performs the verified ACP handshake and creates a session", async () => {
   const binDir = makeTempDir();
   const cwd = makeTempDir();
@@ -82,4 +95,52 @@ test("GrokAcpClient surfaces a direct-spawn failure with the raw stderr tail", a
     }),
     /fake grok raw failure tail: agent process could not start/
   );
+});
+
+test("session/prompt is not constrained by the flat request timeout", async () => {
+  const binDir = makeTempDir();
+  const cwd = makeTempDir();
+  installFakeGrok(binDir, "delayed");
+  const client = await GrokAcpClient.connect(cwd, {
+    disableBroker: true,
+    env: buildEnv(binDir),
+    requestTimeoutMs: 100,
+    initializeTimeoutMs: 15000
+  });
+
+  try {
+    const { sessionId } = await client.request("session/new", { cwd, mcpServers: [] });
+    const result = await client.request("session/prompt", {
+      sessionId,
+      prompt: [{ type: "text", text: "finish after the flat timeout" }]
+    });
+    assert.deepEqual(result, { stopReason: "end_turn" });
+  } finally {
+    await client.close();
+  }
+});
+
+test("direct close terminates the Grok process group and its descendant", { skip: process.platform === "win32" }, async (t) => {
+  const binDir = makeTempDir();
+  const cwd = makeTempDir();
+  installFakeGrok(binDir, "process-group-hanging");
+  const client = await GrokAcpClient.connect(cwd, {
+    disableBroker: true,
+    env: buildEnv(binDir),
+    requestTimeoutMs: 15000
+  });
+  const processState = await waitForState(binDir, (state) => state.agentProcesses[0]);
+  const { pid, descendantPid } = processState.agentProcesses[0];
+  t.after(() => {
+    for (const candidate of [descendantPid, pid]) {
+      try {
+        process.kill(candidate, "SIGKILL");
+      } catch {
+        // Already terminated by client.close().
+      }
+    }
+  });
+
+  await client.close();
+  await Promise.all([waitForProcessExit(pid), waitForProcessExit(descendantPid)]);
 });

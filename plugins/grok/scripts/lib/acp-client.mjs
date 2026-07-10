@@ -101,27 +101,29 @@ class AcpClientBase {
 
     const id = this.nextId;
     this.nextId += 1;
-    const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
+    const timeoutMs = method === "session/prompt" ? null : options.timeoutMs ?? this.requestTimeoutMs;
 
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id);
-        reject(createProtocolError(`Timed out waiting for grok ACP ${method} after ${timeoutMs}ms.`, {
-          code: -32000,
-          method,
-          timeoutMs
-        }));
-      }, timeoutMs);
-      timeout.unref?.();
+      const timeout = timeoutMs == null
+        ? null
+        : setTimeout(() => {
+            this.pending.delete(id);
+            reject(createProtocolError(`Timed out waiting for grok ACP ${method} after ${timeoutMs}ms.`, {
+              code: -32000,
+              method,
+              timeoutMs
+            }));
+          }, timeoutMs);
+      timeout?.unref?.();
 
       this.pending.set(id, {
         method,
         resolve: (value) => {
-          clearTimeout(timeout);
+          if (timeout) clearTimeout(timeout);
           resolve(value);
         },
         reject: (error) => {
-          clearTimeout(timeout);
+          if (timeout) clearTimeout(timeout);
           reject(error);
         }
       });
@@ -130,7 +132,7 @@ class AcpClientBase {
         this.sendMessage({ id, method, params });
       } catch (error) {
         this.pending.delete(id);
-        clearTimeout(timeout);
+        if (timeout) clearTimeout(timeout);
         reject(error);
       }
     });
@@ -233,9 +235,11 @@ class SpawnedGrokAcpClient extends AcpClientBase {
       cwd: this.cwd,
       env: this.options.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
       shell: process.platform === "win32" ? (process.env.SHELL || true) : false,
       windowsHide: true
     });
+    this.options.onSpawn?.(this.proc.pid);
 
     this.proc.stdout.setEncoding("utf8");
     this.proc.stderr.setEncoding("utf8");
@@ -249,6 +253,7 @@ class SpawnedGrokAcpClient extends AcpClientBase {
       this.handleExit(error);
     });
     this.proc.on("exit", (code, signal) => {
+      this.options.onExit?.(this.proc.pid);
       this.handleExit(directExitError(code, signal, this.stderr));
     });
 

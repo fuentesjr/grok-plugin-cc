@@ -14,6 +14,7 @@ import {
 import { parseBrokerEndpoint } from "./lib/broker-endpoint.mjs";
 
 const VALID_ACCESS_LEVELS = new Set(["read-only", "workspace"]);
+const DEFAULT_JOB_BUDGET_MS = 20 * 60 * 1000;
 
 function buildJsonRpcError(code, message, data) {
   return data === undefined ? { code, message } : { code, message, data };
@@ -60,7 +61,7 @@ function extractRouting(params) {
   const budgetMs =
     Number.isFinite(declaration.budgetMs) && declaration.budgetMs > 0
       ? Math.floor(declaration.budgetMs)
-      : null;
+      : DEFAULT_JOB_BUDGET_MS;
   return { access, budgetMs, meta };
 }
 
@@ -116,7 +117,7 @@ async function main() {
   function routeNotification(profile, message) {
     const sessionId = message.params?.sessionId ?? null;
     const owner = sessionId ? sessionOwners.get(sessionId) : null;
-    const target = owner?.socket ?? activeRequestSocket ?? activeStreamSocket;
+    const target = owner ? owner.socket : activeRequestSocket ?? activeStreamSocket;
     if (target) {
       send(target, message);
     }
@@ -168,9 +169,6 @@ async function main() {
   }
 
   function startBudget(owner, sessionId) {
-    if (!owner.budgetMs) {
-      return;
-    }
     if (owner.budgetTimer) {
       clearTimeout(owner.budgetTimer);
     }
@@ -210,7 +208,8 @@ async function main() {
         socket,
         budgetMs: routing.budgetMs,
         budgetTimer: null,
-        budgetExpired: false
+        budgetExpired: false,
+        inFlight: false
       });
       return result;
     }
@@ -220,9 +219,12 @@ async function main() {
     if (!owner) {
       throw new Error(`No broker child owns Grok session ${sessionId ?? "(missing)"}.`);
     }
-    owner.socket = socket;
+    if (owner.socket !== socket) {
+      throw new Error(`Socket does not own Grok session ${sessionId}.`);
+    }
 
     if (message.method === "session/prompt") {
+      owner.inFlight = true;
       startBudget(owner, sessionId);
       try {
         const result = await requestChild(owner.child, message.method, message.params ?? {});
@@ -236,6 +238,7 @@ async function main() {
             }
           : result;
       } finally {
+        owner.inFlight = false;
         clearBudget(owner);
       }
     }
@@ -243,10 +246,10 @@ async function main() {
     return requestChild(owner.child, message.method, message.params ?? {});
   }
 
-  async function routeCancel(message) {
+  async function routeCancel(socket, message) {
     const sessionId = message.params?.sessionId ?? null;
     const owner = sessionId ? sessionOwners.get(sessionId) : null;
-    if (!owner) {
+    if (!owner || owner.socket !== socket) {
       return;
     }
     owner.child.client.notify("session/cancel", { sessionId });
@@ -325,7 +328,7 @@ async function main() {
         }
 
         if (message.id === undefined && message.method === "session/cancel") {
-          await routeCancel(message);
+          await routeCancel(socket, message);
           continue;
         }
 
@@ -364,12 +367,22 @@ async function main() {
       }
     });
 
-    socket.on("close", () => {
+    function handleSocketDisconnect() {
       sockets.delete(socket);
-    });
-    socket.on("error", () => {
-      sockets.delete(socket);
-    });
+      clearRequestOwnership(socket, true);
+      for (const [sessionId, owner] of sessionOwners) {
+        if (owner.socket !== socket) {
+          continue;
+        }
+        owner.socket = null;
+        if (owner.inFlight) {
+          owner.child.client.notify("session/cancel", { sessionId });
+        }
+      }
+    }
+
+    socket.on("close", handleSocketDisconnect);
+    socket.on("error", handleSocketDisconnect);
   });
 
   process.on("SIGTERM", async () => {

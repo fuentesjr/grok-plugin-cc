@@ -56,6 +56,11 @@ function cleanupSessionJobs(cwd, sessionId) {
     } catch {
       // Ignore teardown failures during session shutdown.
     }
+    try {
+      terminateProcessTree(job.childPid ?? Number.NaN);
+    } catch {
+      // Ignore direct-child teardown failures during session shutdown.
+    }
   }
   if (removedJobs.length > 0) {
     saveState(workspaceRoot, {
