@@ -18,6 +18,10 @@ Claude Code's `/plugin update` silently no-ops on the stale snapshot.
   guardrails (stale install/broker, the stop-gate escape hatch, job budget, clean-tree
   refusal, no-commit rules), linking to the canonical sections.
 
+### Security
+- Surfaced the `grok --debug-file` warning into the README Safety model: its logs record the
+  OAuth bearer token in plaintext (previously noted only in internal implementation notes).
+
 ## [0.2.0] - 2026-07-11
 
 Phase 2 — parity with the codex plugin's second-phase surface.

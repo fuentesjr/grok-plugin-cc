@@ -116,6 +116,7 @@ Results are trust-but-verify: Grok's claim of a green run is never taken at face
 
 - **The sandbox is the hard boundary, not the prompt rules.** The `read-only`/`workspace` sandbox profile is kernel-enforced at process spawn — under `read-only`, every write path fails with `Operation not permitted`. The standing no-commit/no-push rules above are prompt-level guidance only and should not be relied on for enforcement.
 - **Known gap**: Grok's child-process network blocking is a no-op on macOS. Read-only jobs are filesystem-confined but not network-confined.
+- **Never enable `grok --debug-file`**: its logs record the OAuth bearer token in plaintext. The plugin never turns it on in any shipped code path; if you enable Grok debug logging yourself while troubleshooting, treat those logs as secrets and scrub the token before sharing them.
 - **Version drift**: `/grok:setup` records the last-verified `grok` version per workspace. If the installed version changes, it surfaces a prominent warning with both versions and recommends a cheap read-only `/grok:rescue` to re-verify behavior before trusting further runs.
 
 ## Stop-review gate (optional, off by default)
