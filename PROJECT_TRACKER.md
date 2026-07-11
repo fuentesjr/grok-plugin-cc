@@ -50,12 +50,12 @@ All three slices built, committed (c1dbad6 slices 1+2, 6790912 slice 3), reviewe
 
 ### Next steps
 
-Phase 2 is **code-complete**; what remains before calling the plugin fully done:
+Phase 2 is **code-complete** and its **behavioral layer is an automated green smoke**: `scripts/phase2-live-smoke.sh` drives the real `grok` CLI through the companion + Stop hook (review catches a planted bug, adversarial-review returns design findings, setup gate toggle, and the Stop hook's ALLOW/BLOCK/busy-skip/gate-off matrix) — last run 15/15 green, 2026-07-11. What remains before calling the plugin fully done:
 
-1. **Live in-session validation of the Phase 2 surface (reserved for Sal — needs a real interactive Claude Code session).** Everything was verified via the companion CLI + hermetic tests + real hook-JSON piped to the Stop hook, but not through an actual marketplace install. Before running: restart the workspace broker (kill pid + remove `broker.json` from the state dir) so it loads current code. Then exercise:
-   - `/grok:adversarial-review is <focus question>` as a real slash command on a diff with a design smell — confirm grounded design findings render.
-   - `/grok:setup --enable-review-gate`, make a small edit, then end the turn to trigger the `Stop` hook — confirm hooks.json is registered, the gate reviews the turn, and a BLOCK actually stops the session (a clean edit should ALLOW). Then `/grok:setup --disable-review-gate` to turn it back off.
-   - Re-scoped `/grok:review` on a planted bug from a live session — confirm it still catches it (already CLI-verified; this is the in-harness confirmation).
+1. **In-TUI harness validation (reserved for Sal — the only part the smoke script cannot cover).** The smoke proves the behavior; it cannot prove the Claude Code *harness* wiring. In a real session (restart the workspace broker first — kill pid + remove `broker.json` — so it loads current code):
+   - Confirm `/grok:adversarial-review` is a registered slash command and renders findings in-session.
+   - `/grok:setup --enable-review-gate`, make an edit, then end the turn — confirm the `Stop` hook actually fires on a genuine Stop event and a BLOCK stops the session (clean edit → ALLOW). Then `/grok:setup --disable-review-gate`.
+   - (`scripts/phase2-live-smoke.sh` covers the rest end-to-end; run it for the behavioral regression pass.)
 2. **After #1, mark Phase 2 fully signed off** and update this tracker + `implementation-notes.md` verification log with the session id (mirrors the Phase-1 sign-off entry, session 46e89803).
 3. Optional / deferred by design: worktree isolation for background write jobs — only if the clean-tree guard ever chafes (it hasn't).
 
