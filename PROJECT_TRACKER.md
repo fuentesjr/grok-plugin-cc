@@ -37,7 +37,7 @@ Pre-verified by live ACP spike (2026-07-09): process-level sandbox enforcement, 
 - [x] `/grok:setup` passes against real `grok` 0.2.93 (companion `setup --json`: ready, auth verified via live ACP handshake)
 - [x] Manual end-to-end: real `/grok:rescue` (read-only) and `/grok:review` on a sample diff; `/grok:status`/`/grok:result` round-trip; cancel a hanging job; write job blocked on dirty tree when backgrounded — all via companion CLI (2026-07-10; found and fixed the session/prompt flat-timeout bug in the process)
 - [x] Install as local marketplace in Claude Code and exercise the commands from a session (Sal, 2026-07-10, session 46e89803 in ~/Projects/ctxpack: setup ready + version persisted, rescue via grok-rescue subagent completed read-only, status/result round-trip, hook-exported session id confirmed in job records)
-- [x] Live background **write** job (task-mrfm0omk-ryt237 in ~/Projects/ctxpack): completed end_turn, edited README.md in place, standing no-commit rule honored by the model. Known issue found: `touchedFiles` came back empty despite a real edit — session/update file-change decoding gap, fix in a follow-up.
+- [x] Live background **write** job (task-mrfm0omk-ryt237 in ~/Projects/ctxpack): completed end_turn, edited README.md in place, standing no-commit rule honored by the model. Known issue found: `touchedFiles` came back empty despite a real edit — session/update file-change decoding gap, fixed in 2ec4bc4 (verified live: real write job now reports the edited path).
 
 **Phase 1 is fully signed off (2026-07-10).**
 - [x] Update `implementation-notes.md` verification status
