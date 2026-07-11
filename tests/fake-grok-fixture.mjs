@@ -179,6 +179,55 @@ function emitCompletingTurn(sessionId, messageChunks) {
   }
 }
 
+function emitWriteTurn(sessionId) {
+  const filePath = "/abs/path/probe.txt";
+  emitUpdate(sessionId, {
+    sessionUpdate: "tool_call",
+    toolCallId: "call-write-0",
+    title: "write",
+    rawInput: { file_path: filePath, content: "hello\\n" },
+    _meta: {
+      "x.ai/tool": {
+        version: 1,
+        name: "write",
+        kind: "write",
+        namespace: "opencode",
+        label: "Write",
+        read_only: false
+      }
+    }
+  });
+  emitUpdate(sessionId, {
+    sessionUpdate: "tool_call_update",
+    toolCallId: "call-write-0",
+    kind: "edit",
+    title: "Write \`" + filePath + "\`",
+    content: [{ type: "diff", path: filePath, oldText: "", newText: "hello\\n" }],
+    locations: [{ path: filePath }],
+    rawInput: { variant: "Write", file_path: filePath, content: "hello\\n" }
+  });
+  emitUpdate(sessionId, {
+    sessionUpdate: "tool_call_update",
+    toolCallId: "call-write-0",
+    status: "completed",
+    content: [{ type: "diff", path: filePath, oldText: "", newText: "hello\\n", _meta: {} }],
+    rawOutput: { type: "SearchReplace", EditsApplied: { absolute_path: filePath } }
+  });
+  emitUpdate(sessionId, {
+    sessionUpdate: "tool_call",
+    toolCallId: "call-read-0",
+    title: "read_file",
+    rawInput: { file_path: "/abs/path/read-only.txt" },
+    _meta: {
+      "x.ai/tool": { version: 1, name: "read_file", kind: "read", read_only: true }
+    }
+  });
+  emitUpdate(sessionId, {
+    sessionUpdate: "agent_message_chunk",
+    content: { type: "text", text: "Write completed." }
+  });
+}
+
 function handlePrompt(message) {
   const sessionId = message.params && message.params.sessionId;
   const session = state.sessions.find((candidate) => candidate.sessionId === sessionId);
@@ -220,6 +269,8 @@ function handlePrompt(message) {
         content: { type: "text", text }
       });
     }
+  } else if (BEHAVIOR === "write-turn") {
+    emitWriteTurn(sessionId);
   } else if (BEHAVIOR === "delayed") {
     setTimeout(() => {
       emitCompletingTurn(sessionId, ["Delayed ", "completion."]);

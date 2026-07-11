@@ -145,3 +145,8 @@ Open questions / residual risk:
 - Successful setup verification persists `config.lastVerifiedGrokVersion` per workspace without pinning the CLI. Setup compares the stored and reported strings before advancing the stored value, emits `versionDrift: { previous, current }` plus a prominent warning on change, and leaves the stored version untouched when availability/auth verification fails.
 - The fake Grok version is overridable through `FAKE_GROK_VERSION`; runtime coverage verifies first storage, JSON and human drift warnings, failed-auth retention, successful advancement, and one-time clearing. Setup command guidance now requires Claude to surface drift prominently.
 - Verified: `node --test tests/*.test.mjs` — 64 tests total, 60 passed, 0 failed, 4 skipped because this sandbox blocks Unix socket listeners.
+
+## Build log — touched-file capture (2026-07-10)
+
+- Decode edit-shaped ACP tool events into per-turn, deduplicated `touchedFiles`, preferring `locations[].path`, then diff-content paths, then writable `rawInput.file_path`; realistic write/read fixture coverage added.
+- Verified: `node --test tests/*.test.mjs` — 65 tests total, 61 passed, 0 failed, 4 socket-gated skips.

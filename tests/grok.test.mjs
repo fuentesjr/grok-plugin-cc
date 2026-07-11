@@ -75,6 +75,19 @@ test("runAcpTurn accumulates multi-chunk ACP messages", async () => {
   assert.equal(result.finalMessage, "Streamed answer complete.");
 });
 
+test("runAcpTurn reports realistic write events once and ignores read_file", async () => {
+  const { cwd, env } = setupFake("write-turn");
+  const result = await runAcpTurn(cwd, {
+    prompt: "Write the probe",
+    env,
+    disableBroker: true,
+    sandbox: "workspace-write"
+  });
+
+  assert.deepEqual(result.touchedFiles, ["/abs/path/probe.txt"]);
+  assert.ok(!result.touchedFiles.includes("/abs/path/read-only.txt"));
+});
+
 test("runAcpTurn cancels a hanging prompt when its wall-clock budget expires", async () => {
   const { binDir, cwd, env } = setupFake("hanging");
   const result = await runAcpTurn(cwd, {

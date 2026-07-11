@@ -104,6 +104,43 @@ function toolOutputText(update) {
   return contentText(update?.content).trim();
 }
 
+function isEditTool(tool) {
+  const metadata = tool?._meta?.["x.ai/tool"];
+  return (
+    tool?.kind === "edit" ||
+    metadata?.kind === "write" ||
+    metadata?.kind === "edit" ||
+    metadata?.read_only === false
+  );
+}
+
+function touchedPaths(update, tool) {
+  if (!isEditTool(tool)) {
+    return [];
+  }
+
+  const locationPaths = Array.isArray(update?.locations)
+    ? update.locations.map((location) => location?.path).filter(Boolean)
+    : [];
+  if (locationPaths.length > 0) {
+    return locationPaths;
+  }
+
+  const diffPaths = Array.isArray(update?.content)
+    ? update.content
+        .filter((entry) => entry?.type === "diff")
+        .map((entry) => entry?.path)
+        .filter(Boolean)
+    : [];
+  if (diffPaths.length > 0) {
+    return diffPaths;
+  }
+
+  return tool?._meta?.["x.ai/tool"]?.read_only === false && update?.rawInput?.file_path
+    ? [update.rawInput.file_path]
+    : [];
+}
+
 function standingRules(cwd) {
   return [
     "Do not run `git commit` or `git push`.",
@@ -175,6 +212,7 @@ async function capturePrompt(client, sessionId, prompt, options = {}) {
   let reasoningText = "";
   let plan = null;
   const toolCalls = new Map();
+  const touchedFiles = new Set();
   const previousHandler = client.notificationHandler;
 
   client.setNotificationHandler((message) => {
@@ -214,12 +252,20 @@ async function capturePrompt(client, sessionId, prompt, options = {}) {
 
       case "tool_call": {
         const progress = buildToolProgress(update, toolCalls, false);
+        const tool = toolCalls.get(update.toolCallId);
+        for (const file of touchedPaths(update, tool)) {
+          touchedFiles.add(file);
+        }
         emitProgress(options.onProgress, progress.message, progress.phase, { threadId: sessionId });
         break;
       }
 
       case "tool_call_update": {
         const progress = buildToolProgress(update, toolCalls, true);
+        const tool = toolCalls.get(update.toolCallId);
+        for (const file of touchedPaths(update, tool)) {
+          touchedFiles.add(file);
+        }
         emitProgress(options.onProgress, progress.message, progress.phase, {
           threadId: sessionId,
           logTitle: progress.logTitle,
@@ -277,6 +323,7 @@ async function capturePrompt(client, sessionId, prompt, options = {}) {
       reasoningSummary: normalizedReasoning ? [normalizedReasoning] : [],
       plan,
       toolCalls: [...toolCalls.values()],
+      touchedFiles: [...touchedFiles],
       budgetExpired
     };
   } catch (error) {
@@ -540,7 +587,7 @@ export async function runAcpTurn(cwd, options = {}) {
         error: null,
         stderr: client.stderr.trim(),
         fileChanges: [],
-        touchedFiles: [],
+        touchedFiles: turn.touchedFiles,
         commandExecutions: turn.toolCalls,
         plan: turn.plan,
         transport: client.transport
