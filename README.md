@@ -128,6 +128,18 @@ An opt-in `Stop` hook that runs a quick Grok review of the previous turn's edits
 - **Fail-open vs fail-closed**: it fails *open* (allows the stop) when the gate is off, Grok isn't set up, or the Broker is busy; it fails *closed* (blocks) on a genuine review failure — a BLOCK verdict, timeout, or unusable output. The escape hatch if it ever gets in your way is `/grok:setup --disable-review-gate`.
 - **Time-bounded**: the nested review runs under an 8-minute Grok budget inside a 10-minute subprocess timeout inside a 12-minute hook ceiling, so a graceful cancel fires before anything is force-killed.
 
+## Troubleshooting
+
+Most surprises here are guardrails behaving as designed. Symptom → cause → fix:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| You updated or changed the plugin but nothing changed — a new command is missing, or a hook/behavior is stale | Two caching layers: the installed plugin snapshot, and the per-workspace Broker holding already-loaded code | Refresh **both**: bump the version → `/plugin` update → `/reload-plugins` for the snapshot ([Releasing](RELEASING.md)), **and** restart the Broker (new session, or kill its pid and remove `broker.json`). `/reload-plugins` does *not* restart the Broker. |
+| The stop-review gate won't let you end the session | The gate is enabled and keeps finding an issue (or an infra failure fails closed) | `/grok:setup --disable-review-gate` — see [Stop-review gate](#stop-review-gate-optional-off-by-default). |
+| A background job was cancelled on its own | The per-job 20-minute wall-clock budget expired | Expected; raise it with `--budget-ms` or `GROK_COMPANION_BUDGET_MS` — see [How it works](#how-it-works). |
+| A background write job was refused | Background writes require a clean working tree so they can't race your live edits | Commit or stash first, or run with `--wait` — see [How it works](#how-it-works). |
+| Grok won't `git commit` or `push` its work | By design — standing rules forbid it; you own commits | Expected; review the diff and commit yourself — see [Safety model](#safety-model). |
+
 ## Development
 
 ```bash

@@ -14,6 +14,9 @@ Claude Code's `/plugin update` silently no-ops on the stale snapshot.
 - Release discipline: this changelog, `RELEASING.md`, a `node --test` case that fails if
   the version strings drift or a changelog entry is missing, and `scripts/bump-version.sh`
   to bump all manifests in lockstep and roll this file.
+- README Troubleshooting section: symptom → cause → fix for the plugin's designed-behavior
+  guardrails (stale install/broker, the stop-gate escape hatch, job budget, clean-tree
+  refusal, no-commit rules), linking to the canonical sections.
 
 ## [0.2.0] - 2026-07-11
 
