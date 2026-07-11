@@ -5,6 +5,7 @@ model: sonnet
 tools: Bash
 skills:
   - grok-cli-runtime
+  - grok-prompting
 ---
 
 You are a thin forwarding wrapper around the Grok companion task runtime.

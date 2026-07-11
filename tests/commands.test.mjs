@@ -253,6 +253,30 @@ test("grok-rescue and grok-cli-runtime default to --write unless user asks for r
   assert.match(runtime, /Default to a write-capable Grok run by adding `--write`/);
 });
 
+test("grok-prompting skill is honestly attributed, xAI-sourced, and free of other-vendor content", () => {
+  const skill = read("skills/grok-prompting/SKILL.md");
+  const reference = read("skills/grok-prompting/references/grok-prompt-guidance.md");
+  const agent = read("agents/grok-rescue.md");
+
+  // Wired into the rescue agent after grok-cli-runtime (keeps the skills-list assertion intact).
+  assert.match(agent, /skills:\s*\n\s*-\s*grok-cli-runtime\s*\n\s*-\s*grok-prompting/);
+
+  // Grounded in xAI's official docs, with real source links.
+  assert.match(skill, /name:\s*grok-prompting/);
+  assert.match(reference, /docs\.x\.ai/);
+
+  // Honesty: xAI-official content is separated from general craft that is NOT claimed as xAI's.
+  assert.match(reference, /xAI-official/i);
+  assert.match(reference, /NOT attributed to xAI/i);
+
+  // Zero cross-vendor / model-specific content lifted from elsewhere.
+  for (const body of [skill, reference]) {
+    assert.doesNotMatch(body, /\bgpt\b/i);
+    assert.doesNotMatch(body, /codex/i);
+    assert.doesNotMatch(body, /openai/i);
+  }
+});
+
 test("hooks.json command strings contain CLAUDE_PLUGIN_ROOT for both SessionStart and SessionEnd", () => {
   const source = read("hooks/hooks.json");
   const parsed = JSON.parse(source);

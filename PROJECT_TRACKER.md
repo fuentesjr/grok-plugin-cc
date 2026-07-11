@@ -71,10 +71,11 @@ Design is fully grilled and locked; read `implementation-notes.md` "Phase 2 desi
 - [x] Re-scope `/grok:review` prompt to defect/correctness (bug-hunt); re-verify with the planted-bug case — **live-verified**: re-scoped review caught a planted overdraft bug (removed sufficient-funds guard) as `needs-attention`, critical, confidence 0.99, schema-valid. No lost teeth.
 - [x] `/grok:adversarial-review` command + companion `adversarial-review` subcommand (accepts focus text) + `prompts/adversarial-review.md` (Fable spec: `design_attack_surface`, burden-of-proof, named-alternative-with-costs, steelman-then-break, undefended-commitment, anchor rule, confidence ≤0.6 on inference). codex did the runtime coupling (`runAcpReview` `promptName`) + companion subcommand + tests. Reviewer-approved (should-fix: added an adversarial-template-selection assertion; nit: rendered label now "Adversarial Review"). **Live-verified**: adversarial run on a symptom-patch diff produced grounded design findings (undefended-commitment + wrong-layer) with named alternatives + costs, focus honored, schema-valid.
 
-### grok-prompting skill
-- [ ] `skills/grok-prompting/` — research-first, thin, honestly-attributed (only xAI-official attributed to xAI; gaps = labeled generic craft; zero GPT content); wire into `grok-rescue` agent `skills`
+### grok-prompting skill — DONE (2026-07-11)
+- [x] `skills/grok-prompting/` — research-first, thin (SKILL.md + 1 reference), honestly-attributed. Part 1 = xAI-official (from docs.x.ai grok-code-prompt-engineering, build/overview, prompt-caching best-practices), Part 2 = clearly-labeled generic craft NOT attributed to xAI; zero GPT/codex/OpenAI content. Honest caveat: Grok Build defaults to grok-4.5 while xAI's prompt guide targets grok-code-fast-1 (structural points are model-general, model-selection point is not). Wired into `grok-rescue` agent `skills` (after `grok-cli-runtime`). doc-reviewer independently corroborated all four sources — attribution accurate, no corrections. Forward-note: re-verify Part 1 citations if grok-code-fast-1's xAI docs page is ever pulled.
 
 ### Verification & sign-off
-- [x] Hermetic suite green (`node --test`) incl. new stop-gate + adversarial-review + review-split tests — 90/90 on host (0 skipped), 2026-07-11
+- [x] Hermetic suite green (`node --test`) incl. new stop-gate + adversarial-review + review-split + grok-prompting tests — 91/91 on host (0 skipped), 2026-07-11
 - [x] Live: gate ALLOW/BLOCK round-trip, busy-broker skip, `/grok:adversarial-review` on a planted design-smell diff, re-scoped `/grok:review` still catches the planted bug — all live-verified against grok 0.2.93, 2026-07-11
-- [ ] grok-prompting skill (slice 3) still pending; re-run the hermetic suite after it lands for the Phase 2 sign-off
+
+**Phase 2 is fully signed off (2026-07-11):** all three slices landed, reviewer/doc-reviewer-gated, live-verified. Fable advised the adversarial prompt + the stop-gate busy/parsing decisions.
