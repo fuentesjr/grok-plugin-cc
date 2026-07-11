@@ -60,7 +60,8 @@ Phase 2 details deliberately un-grilled — grill them when Phase 1 ships.
 
 ## Open items
 
-- Remaining for Phase 1 sign-off: install as local marketplace and exercise `/grok:*` from a live Claude Code session; a real background **write** job end-to-end (guard paths are hermetically tested; the live write run is reserved for Sal).
+- **Phase 2 live in-session validation (reserved for Sal):** everything is verified via the companion CLI + hermetic tests + real hook-JSON piped to the Stop hook, but the Phase-2 surface has not been exercised through an actual marketplace install in a live Claude Code session — `/grok:adversarial-review` as a real slash command, the Stop gate firing on a genuine Stop event with the gate enabled (confirms hooks.json registration + the 720s ceiling + the harness honoring `{decision:"block"}`), and `/grok:setup --enable-review-gate` from within a session. This mirrors the Phase-1 live-session sign-off. See PROJECT_TRACKER "Next steps".
+- Deferred by design (not needed): worktree isolation for background write jobs — listed as optional "if the clean-tree guard chafes"; it never chafed.
 - Known accepted debt from the 2026-07-10 runtime review: unix-socket perms rely on the 0700 mkdtemp dir (matches reference; fine on macOS per-user TMPDIR); jobs dispatched without `GROK_COMPANION_SESSION_ID` are not swept by SessionEnd cleanup (edge case — the hook always sets it in real installs).
 - Operational gotcha: the broker daemon persists per session and holds loaded code — after upgrading plugin code, restart the broker (SessionEnd or kill + remove `broker.json`) or jobs keep hitting the old behavior.
 

@@ -46,20 +46,21 @@ Pre-verified by live ACP spike (2026-07-09): process-level sandbox enforcement, 
 
 - [x] Design grilling — decisions recorded in `implementation-notes.md` "Phase 2 design" (2026-07-10; Fable advised the adversarial prompt)
 
-### Start here (next session)
+All three slices built, committed (c1dbad6 slices 1+2, 6790912 slice 3), reviewer/doc-reviewer-gated, and live-verified against grok 0.2.93. 91/91 hermetic on host. Build order was review split → stop-gate → grok-prompting; codex did the runtime-coupled code (dispatched **fresh** each time — `--resume-last` fails in this repo, prior porting session ran under the pre-rename path), self owned all markdown/research/integration/verification, Fable advised the adversarial prompt + the stop-gate busy/parsing calls.
 
-Design is fully grilled and locked; read `implementation-notes.md` "Phase 2 design" first — it holds the rationale behind every checkbox below. Nothing is built yet.
+### Next steps
 
-**Build order** (3 independent, separately-verifiable slices):
-1. **Review split (do first)** — de-risks the shared prompt/engine path; adversarial prompt already authored by Fable.
-2. **Stop-review-gate** — depends only on the existing `task` path.
-3. **grok-prompting skill** — independent, lightest.
+Phase 2 is **code-complete**; what remains before calling the plugin fully done:
 
-**Dispatch** (per Sal): codex for heavy/runtime-coupled work (companion `adversarial-review` subcommand + stop-gate hook logic + their tests — codex holds porting context, `--resume-last` on session `019f4c97-2389-7c62-882d-ac02dc629b0d`); sonnet/self for prompts/commands/hooks/setup markdown, agent wiring, xAI research, verification; Fable as advisor on ambiguous runtime calls.
+1. **Live in-session validation of the Phase 2 surface (reserved for Sal — needs a real interactive Claude Code session).** Everything was verified via the companion CLI + hermetic tests + real hook-JSON piped to the Stop hook, but not through an actual marketplace install. Before running: restart the workspace broker (kill pid + remove `broker.json` from the state dir) so it loads current code. Then exercise:
+   - `/grok:adversarial-review is <focus question>` as a real slash command on a diff with a design smell — confirm grounded design findings render.
+   - `/grok:setup --enable-review-gate`, make a small edit, then end the turn to trigger the `Stop` hook — confirm hooks.json is registered, the gate reviews the turn, and a BLOCK actually stops the session (a clean edit should ALLOW). Then `/grok:setup --disable-review-gate` to turn it back off.
+   - Re-scoped `/grok:review` on a planted bug from a live session — confirm it still catches it (already CLI-verified; this is the in-harness confirmation).
+2. **After #1, mark Phase 2 fully signed off** and update this tracker + `implementation-notes.md` verification log with the session id (mirrors the Phase-1 sign-off entry, session 46e89803).
+3. Optional / deferred by design: worktree isolation for background write jobs — only if the clean-tree guard ever chafes (it hasn't).
 
-**Risk flag:** Slice 1 re-scopes the signed-off `/grok:review` (skeptical → defect-focused). Prove no lost teeth via Phase 1's planted-bug case. (If we'd rather freeze `/grok:review`, that reverts to "Option B" — accept fuzzier distinction; Sal chose the split.)
-
-**Runtime gotcha:** after changing plugin code, restart the broker (kill pid + remove `broker.json` from the state dir) or live tests exercise stale code.
+**Runtime gotcha (still applies):** after changing plugin code, restart the broker (kill pid + remove `broker.json` from the state dir) or live runs exercise stale code.
+**Dispatch gotcha:** codex `--resume-last` does not resolve in this repo — dispatch codex **fresh** with a self-contained spec-brief for any future runtime-coupled work.
 
 ### Stop-review-gate — DONE (2026-07-11)
 - [x] `scripts/stop-review-gate-hook.mjs` — `Stop` hook: turn-scoped internal `stop-review-task --json`, `ALLOW:`/`BLOCK:` parse; skip+allow when broker busy (pre-check + structured `-32001`); nested budget/timeout (8m/10m/12m); fail-closed on genuine review failure, fail-open on not-set-up + busy. codex built it; Fable vetted the runtime coupling. Reviewer-approved after two should-fixes (queued-path liveness guard, null-pid tests).
