@@ -65,6 +65,13 @@ Phase 2 details deliberately un-grilled — grill them when Phase 1 ships.
 - Known accepted debt from the 2026-07-10 runtime review: unix-socket perms rely on the 0700 mkdtemp dir (matches reference; fine on macOS per-user TMPDIR); jobs dispatched without `GROK_COMPANION_SESSION_ID` are not swept by SessionEnd cleanup (edge case — the hook always sets it in real installs).
 - Operational gotcha: the broker daemon persists per session and holds loaded code — after upgrading plugin code, restart the broker (SessionEnd or kill + remove `broker.json`) or jobs keep hitting the old behavior.
 
+## Verification status (2026-07-11, Phase 2 — SIGNED OFF)
+
+- Hermetic: `node --test tests/*.test.mjs` — **91/91** on host (0 skipped; sockets available).
+- Behavioral smoke: `scripts/phase2-live-smoke.sh` against real grok 0.2.93 — **15/15** (review catches planted bug, adversarial-review returns design findings, setup gate toggle, Stop hook ALLOW/BLOCK/busy-skip/gate-off).
+- In-harness (live Claude Code session 57c0e7a5, plugin 0.2.0): `/grok:adversarial-review` registered as a slash command ✓; Stop hook fired on a genuine Stop event, reviewed the turn, and the harness **honored the block** on a planted no-base-case `factorial` (session did not end; reason clean, no preamble leak) ✓; gate toggle + disable ✓.
+- Install mechanics learned: the harness runs the *installed* plugin snapshot, not the live repo; version bumps are required for `/plugin` update to refresh (0.1.0→0.1.0 no-ops). Bumped to 0.2.0; `/reload-plugins` re-registers hooks live without a full restart.
+
 ## Verification status (2026-07-10, Phase 1)
 
 - Hermetic: `node --test tests/*.test.mjs` — **63/63** on macOS (codex's build sandbox skips 4 socket-gated broker tests; they pass on the host).

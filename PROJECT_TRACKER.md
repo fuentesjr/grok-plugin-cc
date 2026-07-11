@@ -48,18 +48,19 @@ Pre-verified by live ACP spike (2026-07-09): process-level sandbox enforcement, 
 
 All three slices built, committed (c1dbad6 slices 1+2, 6790912 slice 3), reviewer/doc-reviewer-gated, and live-verified against grok 0.2.93. 91/91 hermetic on host. Build order was review split → stop-gate → grok-prompting; codex did the runtime-coupled code (dispatched **fresh** each time — `--resume-last` fails in this repo, prior porting session ran under the pre-rename path), self owned all markdown/research/integration/verification, Fable advised the adversarial prompt + the stop-gate busy/parsing calls.
 
-### Next steps
+### In-harness validation — DONE (2026-07-11, session 57c0e7a5)
 
-Phase 2 is **code-complete** and its **behavioral layer is an automated green smoke**: `scripts/phase2-live-smoke.sh` drives the real `grok` CLI through the companion + Stop hook (review catches a planted bug, adversarial-review returns design findings, setup gate toggle, and the Stop hook's ALLOW/BLOCK/busy-skip/gate-off matrix) — last run 15/15 green, 2026-07-11. What remains before calling the plugin fully done:
+The behavioral layer is an automated green smoke (`scripts/phase2-live-smoke.sh`, 15/15) and the harness wiring is now confirmed live:
+- [x] `/grok:adversarial-review` registered as a live slash command — confirmed via `/grok` autocomplete.
+- [x] `Stop` hook fires on a genuine Stop event and the harness **honors the block** — confirmed live: with the gate enabled, a planted no-base-case `factorial` edit produced `{decision:"block"}` and the session did not end; the block reason came back clean (no preamble leak, confirming the tier-2 verdict parser holds in-harness). Gate toggled off after.
+- **Install gotcha found + fixed:** the harness runs the *installed* plugin snapshot, not the live repo. The Phase-1 install (commit 3cd9bd3) had no `Stop` entry, and a `0.1.0`→`0.1.0` update no-ops. Bumped to **0.2.0** (plugin.json + marketplace.json + package.json) so `/plugin` update + `/reload-plugins` refresh the snapshot and register the Stop hook (no full restart needed — `/reload-plugins` re-registered hooks live).
 
-1. **In-TUI harness validation (reserved for Sal — the only part the smoke script cannot cover).** The smoke proves the behavior; it cannot prove the Claude Code *harness* wiring.
-   - [x] `/grok:adversarial-review` registered as a live slash command — confirmed in-session via `/grok` autocomplete (2026-07-11).
-   - [ ] `Stop` hook fires on a genuine Stop event and honors the block decision — the last unconfirmed item. In a real session (restart the workspace broker first — kill pid + remove `broker.json` — so it loads current code): `/grok:setup --enable-review-gate`, make a buggy edit, end the turn → confirm the gate BLOCKS the stop; a clean edit → ALLOW; then `/grok:setup --disable-review-gate`.
-   - (`scripts/phase2-live-smoke.sh` covers all the behavior end-to-end; run it for the behavioral regression pass.)
-2. **After #1, mark Phase 2 fully signed off** and update this tracker + `implementation-notes.md` verification log with the session id (mirrors the Phase-1 sign-off entry, session 46e89803).
-3. Optional / deferred by design: worktree isolation for background write jobs — only if the clean-tree guard ever chafes (it hasn't).
+**Phase 2 is FULLY SIGNED OFF (2026-07-11).** All three slices shipped, reviewer/doc-reviewer-gated, hermetically green (91/91), behaviorally smoke-tested (15/15), and harness-validated in a live session. Released as 0.2.0.
+
+Deferred by design (not needed): worktree isolation for background write jobs — only if the clean-tree guard ever chafes (it hasn't).
 
 **Runtime gotcha (still applies):** after changing plugin code, restart the broker (kill pid + remove `broker.json` from the state dir) or live runs exercise stale code.
+**Install gotcha (new):** the harness uses the installed plugin snapshot — bump the version on any change to the plugin surface (commands/hooks/skills) or `/plugin` update no-ops; `/reload-plugins` re-registers hooks without a full restart.
 **Dispatch gotcha:** codex `--resume-last` does not resolve in this repo — dispatch codex **fresh** with a self-contained spec-brief for any future runtime-coupled work.
 
 ### Stop-review-gate — DONE (2026-07-11)
