@@ -52,10 +52,10 @@ All three slices built, committed (c1dbad6 slices 1+2, 6790912 slice 3), reviewe
 
 Phase 2 is **code-complete** and its **behavioral layer is an automated green smoke**: `scripts/phase2-live-smoke.sh` drives the real `grok` CLI through the companion + Stop hook (review catches a planted bug, adversarial-review returns design findings, setup gate toggle, and the Stop hook's ALLOW/BLOCK/busy-skip/gate-off matrix) — last run 15/15 green, 2026-07-11. What remains before calling the plugin fully done:
 
-1. **In-TUI harness validation (reserved for Sal — the only part the smoke script cannot cover).** The smoke proves the behavior; it cannot prove the Claude Code *harness* wiring. In a real session (restart the workspace broker first — kill pid + remove `broker.json` — so it loads current code):
-   - Confirm `/grok:adversarial-review` is a registered slash command and renders findings in-session.
-   - `/grok:setup --enable-review-gate`, make an edit, then end the turn — confirm the `Stop` hook actually fires on a genuine Stop event and a BLOCK stops the session (clean edit → ALLOW). Then `/grok:setup --disable-review-gate`.
-   - (`scripts/phase2-live-smoke.sh` covers the rest end-to-end; run it for the behavioral regression pass.)
+1. **In-TUI harness validation (reserved for Sal — the only part the smoke script cannot cover).** The smoke proves the behavior; it cannot prove the Claude Code *harness* wiring.
+   - [x] `/grok:adversarial-review` registered as a live slash command — confirmed in-session via `/grok` autocomplete (2026-07-11).
+   - [ ] `Stop` hook fires on a genuine Stop event and honors the block decision — the last unconfirmed item. In a real session (restart the workspace broker first — kill pid + remove `broker.json` — so it loads current code): `/grok:setup --enable-review-gate`, make a buggy edit, end the turn → confirm the gate BLOCKS the stop; a clean edit → ALLOW; then `/grok:setup --disable-review-gate`.
+   - (`scripts/phase2-live-smoke.sh` covers all the behavior end-to-end; run it for the behavioral regression pass.)
 2. **After #1, mark Phase 2 fully signed off** and update this tracker + `implementation-notes.md` verification log with the session id (mirrors the Phase-1 sign-off entry, session 46e89803).
 3. Optional / deferred by design: worktree isolation for background write jobs — only if the clean-tree guard ever chafes (it hasn't).
 
