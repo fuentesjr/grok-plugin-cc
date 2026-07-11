@@ -195,6 +195,7 @@ export function renderSetupReport(report) {
     `- grok: ${report.grok.detail}`,
     `- auth: ${report.auth.detail}`,
     `- session runtime: ${report.sessionRuntime.label}`,
+    `- stop review gate: ${report.reviewGateEnabled ? "enabled" : "disabled"}`,
     ""
   );
 

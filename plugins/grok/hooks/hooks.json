@@ -1,5 +1,5 @@
 {
-  "description": "Session lifecycle hooks for Grok Companion.",
+  "description": "Session lifecycle hooks and optional stop-time review gate for Grok Companion.",
   "hooks": {
     "SessionStart": [
       {
@@ -19,6 +19,17 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session-lifecycle-hook.mjs\" SessionEnd",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/stop-review-gate-hook.mjs\"",
+            "timeout": 720
           }
         ]
       }

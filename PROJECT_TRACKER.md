@@ -42,8 +42,39 @@ Pre-verified by live ACP spike (2026-07-09): process-level sandbox enforcement, 
 **Phase 1 is fully signed off (2026-07-10).**
 - [x] Update `implementation-notes.md` verification status
 
-## Phase 2 — Parity (grill before starting)
+## Phase 2 — Parity
 
-- [ ] Design grilling for stop-review-gate behavior
-- [ ] `/grok:adversarial-review` + stop-review-gate Stop hook
-- [ ] `skills/grok-prompting/` — sourced strictly from xAI's official guidance
+- [x] Design grilling — decisions recorded in `implementation-notes.md` "Phase 2 design" (2026-07-10; Fable advised the adversarial prompt)
+
+### Start here (next session)
+
+Design is fully grilled and locked; read `implementation-notes.md` "Phase 2 design" first — it holds the rationale behind every checkbox below. Nothing is built yet.
+
+**Build order** (3 independent, separately-verifiable slices):
+1. **Review split (do first)** — de-risks the shared prompt/engine path; adversarial prompt already authored by Fable.
+2. **Stop-review-gate** — depends only on the existing `task` path.
+3. **grok-prompting skill** — independent, lightest.
+
+**Dispatch** (per Sal): codex for heavy/runtime-coupled work (companion `adversarial-review` subcommand + stop-gate hook logic + their tests — codex holds porting context, `--resume-last` on session `019f4c97-2389-7c62-882d-ac02dc629b0d`); sonnet/self for prompts/commands/hooks/setup markdown, agent wiring, xAI research, verification; Fable as advisor on ambiguous runtime calls.
+
+**Risk flag:** Slice 1 re-scopes the signed-off `/grok:review` (skeptical → defect-focused). Prove no lost teeth via Phase 1's planted-bug case. (If we'd rather freeze `/grok:review`, that reverts to "Option B" — accept fuzzier distinction; Sal chose the split.)
+
+**Runtime gotcha:** after changing plugin code, restart the broker (kill pid + remove `broker.json` from the state dir) or live tests exercise stale code.
+
+### Stop-review-gate — DONE (2026-07-11)
+- [x] `scripts/stop-review-gate-hook.mjs` — `Stop` hook: turn-scoped internal `stop-review-task --json`, `ALLOW:`/`BLOCK:` parse; skip+allow when broker busy (pre-check + structured `-32001`); nested budget/timeout (8m/10m/12m); fail-closed on genuine review failure, fail-open on not-set-up + busy. codex built it; Fable vetted the runtime coupling. Reviewer-approved after two should-fixes (queued-path liveness guard, null-pid tests).
+- [x] `prompts/stop-review-gate.md` (rebranded, turn-scoped, hardened verdict contract) + `Stop` entry in `hooks/hooks.json` (720s)
+- [x] `config.stopReviewGate` default off + `/grok:setup --enable-review-gate|--disable-review-gate` (toggle re-added to `setup.md` + companion `handleSetup`; setup report surfaces gate status)
+- **Live-exposed fix:** real grok prepends a preamble before the verdict token (breaks the strict first-line parse → permanent stop-loop). Added a boundary-guarded tier-2 verdict scan (Fable-advised); ambiguity/no-token still fail closed. Live-verified ALLOW/BLOCK/busy-skip + setup toggle.
+
+### Review split (Option A) — DONE (2026-07-11)
+- [x] Re-scope `/grok:review` prompt to defect/correctness (bug-hunt); re-verify with the planted-bug case — **live-verified**: re-scoped review caught a planted overdraft bug (removed sufficient-funds guard) as `needs-attention`, critical, confidence 0.99, schema-valid. No lost teeth.
+- [x] `/grok:adversarial-review` command + companion `adversarial-review` subcommand (accepts focus text) + `prompts/adversarial-review.md` (Fable spec: `design_attack_surface`, burden-of-proof, named-alternative-with-costs, steelman-then-break, undefended-commitment, anchor rule, confidence ≤0.6 on inference). codex did the runtime coupling (`runAcpReview` `promptName`) + companion subcommand + tests. Reviewer-approved (should-fix: added an adversarial-template-selection assertion; nit: rendered label now "Adversarial Review"). **Live-verified**: adversarial run on a symptom-patch diff produced grounded design findings (undefended-commitment + wrong-layer) with named alternatives + costs, focus honored, schema-valid.
+
+### grok-prompting skill
+- [ ] `skills/grok-prompting/` — research-first, thin, honestly-attributed (only xAI-official attributed to xAI; gaps = labeled generic craft; zero GPT content); wire into `grok-rescue` agent `skills`
+
+### Verification & sign-off
+- [x] Hermetic suite green (`node --test`) incl. new stop-gate + adversarial-review + review-split tests — 90/90 on host (0 skipped), 2026-07-11
+- [x] Live: gate ALLOW/BLOCK round-trip, busy-broker skip, `/grok:adversarial-review` on a planted design-smell diff, re-scoped `/grok:review` still catches the planted bug — all live-verified against grok 0.2.93, 2026-07-11
+- [ ] grok-prompting skill (slice 3) still pending; re-run the hermetic suite after it lands for the Phase 2 sign-off

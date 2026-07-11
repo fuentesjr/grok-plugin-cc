@@ -13,6 +13,7 @@ import {
   runAcpTurn
 } from "../plugins/grok/scripts/lib/grok.mjs";
 import { enrichJob, readJobProgressPreview } from "../plugins/grok/scripts/lib/job-control.mjs";
+import { interpolateTemplate } from "../plugins/grok/scripts/lib/prompts.mjs";
 import { buildEnv, installFakeGrok, readFakeGrokState } from "./fake-grok-fixture.mjs";
 import { makeTempDir } from "./helpers.mjs";
 
@@ -153,6 +154,56 @@ test("runAcpReview parses strict review JSON and tolerates invalid JSON", async 
   assert.equal(invalidResult.result.parsed, null);
   assert.match(invalidResult.result.parseError, /JSON/);
   assert.equal(invalidResult.result.rawOutput, "This is not JSON.");
+});
+
+test("runAcpReview loads the adversarial-review prompt and interpolates user focus", async () => {
+  const { binDir, cwd, env } = setupFake("review-ok");
+  const variables = {
+    TARGET_LABEL: "working tree diff",
+    USER_FOCUS: "Challenge the module boundaries",
+    REVIEW_COLLECTION_GUIDANCE: "Use the supplied diff as evidence.",
+    REVIEW_INPUT: "diff --git a/app.js b/app.js"
+  };
+  await runAcpReview(cwd, {
+    promptName: "adversarial-review",
+    targetLabel: variables.TARGET_LABEL,
+    userFocus: variables.USER_FOCUS,
+    reviewCollectionGuidance: variables.REVIEW_COLLECTION_GUIDANCE,
+    reviewInput: variables.REVIEW_INPUT,
+    env,
+    disableBroker: true
+  });
+
+  const template = fs.readFileSync(
+    new URL("../plugins/grok/prompts/adversarial-review.md", import.meta.url),
+    "utf8"
+  );
+  const prompt = readFakeGrokState(binDir).prompts[0].prompt[0].text;
+  const expected = interpolateTemplate(template, variables);
+  assert.ok(prompt.startsWith(`${expected.trimEnd()}\n\n<json_schema>`));
+  assert.match(prompt, /Challenge the module boundaries/);
+  assert.doesNotMatch(prompt, /\{\{USER_FOCUS\}\}/);
+});
+
+test("runAcpReview defaults to the review prompt", async () => {
+  const { binDir, cwd, env } = setupFake("review-ok");
+  const variables = {
+    TARGET_LABEL: "working tree diff",
+    USER_FOCUS: "(none)",
+    REVIEW_COLLECTION_GUIDANCE: "Use the repository context below as primary evidence.",
+    REVIEW_INPUT: "diff --git a/app.js b/app.js"
+  };
+  await runAcpReview(cwd, {
+    targetLabel: variables.TARGET_LABEL,
+    reviewInput: variables.REVIEW_INPUT,
+    env,
+    disableBroker: true
+  });
+
+  const template = fs.readFileSync(new URL("../plugins/grok/prompts/review.md", import.meta.url), "utf8");
+  const prompt = readFakeGrokState(binDir).prompts[0].prompt[0].text;
+  const expected = interpolateTemplate(template, variables);
+  assert.ok(prompt.startsWith(`${expected.trimEnd()}\n\n<json_schema>`));
 });
 
 test("parseStructuredOutput tolerates fenced JSON while preserving the raw message", () => {

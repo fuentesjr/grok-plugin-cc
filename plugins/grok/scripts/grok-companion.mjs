@@ -26,6 +26,7 @@ import {
   runAcpReview,
   runAcpTurn
 } from "./lib/grok.mjs";
+import { BROKER_BUSY_RPC_CODE } from "./lib/acp-client.mjs";
 import {
   buildSingleJobSnapshot,
   buildStatusSnapshot,
@@ -66,8 +67,9 @@ function printUsage() {
   console.log(
     [
       "Usage:",
-      "  node scripts/grok-companion.mjs setup [-C <path>] [--json]",
+      "  node scripts/grok-companion.mjs setup [-C <path>] [--json] [--enable-review-gate|--disable-review-gate]",
       "  node scripts/grok-companion.mjs review [-C <path>] [--base <ref>] [--scope <auto|working-tree|branch>] [--json]",
+      "  node scripts/grok-companion.mjs adversarial-review [-C <path>] [--base <ref>] [--scope <auto|working-tree|branch>] [--json] [focus]",
       "  node scripts/grok-companion.mjs task [-C <path>] [--background|--wait] [--write] [--resume-last|--resume|--fresh] [--model <model|fast>] [--effort <value>] [prompt]",
       "  node scripts/grok-companion.mjs status [-C <path>] [job-id] [--wait] [--all] [--json]",
       "  node scripts/grok-companion.mjs result [-C <path>] [job-id] [--json]",
@@ -173,9 +175,10 @@ function ensureGrokAvailable(cwd) {
   }
 }
 
-async function buildSetupReport(cwd) {
+async function buildSetupReport(cwd, actionsTaken = []) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
-  const previousVersion = getConfig(workspaceRoot).lastVerifiedGrokVersion ?? null;
+  const config = getConfig(workspaceRoot);
+  const previousVersion = config.lastVerifiedGrokVersion ?? null;
   const nodeStatus = binaryAvailable("node", ["--version"], { cwd });
   const grokStatus = getGrokAvailability(cwd);
   const authStatus = await getGrokAuthStatus(cwd);
@@ -195,6 +198,9 @@ async function buildSetupReport(cwd) {
   } else if (!authStatus.loggedIn) {
     nextSteps.push("Run `grok login`, then rerun `/grok:setup`.");
   }
+  if (!config.stopReviewGate) {
+    nextSteps.push("Optional: run `/grok:setup --enable-review-gate` to require a fresh review before stop.");
+  }
   const ready = nodeStatus.available && grokStatus.available && authStatus.loggedIn;
   if (ready) {
     setConfig(workspaceRoot, "lastVerifiedGrokVersion", currentVersion);
@@ -207,7 +213,8 @@ async function buildSetupReport(cwd) {
     versionDrift,
     warnings,
     sessionRuntime: getSessionRuntimeStatus(process.env, workspaceRoot),
-    actionsTaken: [],
+    reviewGateEnabled: Boolean(config.stopReviewGate),
+    actionsTaken,
     nextSteps
   };
 }
@@ -215,9 +222,22 @@ async function buildSetupReport(cwd) {
 async function handleSetup(argv) {
   const { options } = parseCommandInput(argv, {
     valueOptions: ["cwd"],
-    booleanOptions: ["json"]
+    booleanOptions: ["json", "enable-review-gate", "disable-review-gate"]
   });
-  const report = await buildSetupReport(resolveCommandCwd(options));
+  if (options["enable-review-gate"] && options["disable-review-gate"]) {
+    throw new Error("Choose either --enable-review-gate or --disable-review-gate.");
+  }
+  const cwd = resolveCommandCwd(options);
+  const workspaceRoot = resolveCommandWorkspace(options);
+  const actionsTaken = [];
+  if (options["enable-review-gate"]) {
+    setConfig(workspaceRoot, "stopReviewGate", true);
+    actionsTaken.push(`Enabled the stop-time review gate for ${workspaceRoot}.`);
+  } else if (options["disable-review-gate"]) {
+    setConfig(workspaceRoot, "stopReviewGate", false);
+    actionsTaken.push(`Disabled the stop-time review gate for ${workspaceRoot}.`);
+  }
+  const report = await buildSetupReport(cwd, actionsTaken);
   outputResult(options.json ? report : renderSetupReport(report), options.json);
 }
 
@@ -265,7 +285,7 @@ function createCompanionJob({ prefix, kind, title, workspaceRoot, jobClass, summ
   return createJobRecord({
     id: generateJobId(prefix),
     kind,
-    kindLabel: jobClass === "review" ? "review" : "rescue",
+    ...(kind === "adversarial-review" ? {} : { kindLabel: jobClass === "review" ? "review" : "rescue" }),
     title,
     workspaceRoot,
     jobClass,
@@ -308,6 +328,8 @@ async function executeReviewRun(request) {
   });
   const context = collectReviewContext(request.cwd, target);
   const result = await runAcpReview(context.repoRoot, {
+    promptName: request.promptName ?? "review",
+    userFocus: request.userFocus,
     targetLabel: context.target.label,
     reviewInput: context.content,
     reviewCollectionGuidance: context.collectionGuidance,
@@ -316,9 +338,10 @@ async function executeReviewRun(request) {
     onProgress: request.onProgress
   });
   const parsed = result.result;
+  const reviewLabel = request.reviewLabel ?? "Review";
   const payload = {
     jobId: request.jobId,
-    review: "Review",
+    review: reviewLabel,
     target,
     threadId: result.threadId,
     context: {
@@ -343,13 +366,13 @@ async function executeReviewRun(request) {
     turnId: result.turnId,
     payload,
     rendered: renderReviewResult(parsed, {
-      reviewLabel: "Review",
+      reviewLabel,
       targetLabel: context.target.label,
       reasoningSummary: result.reasoningSummary
     }),
     summary:
-      parsed.parsed?.summary ?? parsed.parseError ?? firstMeaningfulLine(result.reviewText, "Review finished."),
-    jobTitle: "Grok Review",
+      parsed.parsed?.summary ?? parsed.parseError ?? firstMeaningfulLine(result.reviewText, `${reviewLabel} finished.`),
+    jobTitle: request.jobTitle ?? "Grok Review",
     jobClass: "review",
     targetLabel: context.target.label
   };
@@ -391,6 +414,44 @@ async function handleReview(argv) {
   );
 }
 
+async function handleAdversarialReview(argv) {
+  const { options, positionals } = parseCommandInput(argv, {
+    valueOptions: ["base", "scope", "model", "cwd", "budget-ms"],
+    booleanOptions: ["json", "background", "wait"],
+    aliasMap: { m: "model" }
+  });
+  const focusText = positionals.join(" ") || "No extra focus provided.";
+  const cwd = resolveCommandCwd(options);
+  const workspaceRoot = resolveCommandWorkspace(options);
+  const target = resolveReviewTarget(cwd, { base: options.base, scope: options.scope });
+  const job = createCompanionJob({
+    prefix: "adversarial-review",
+    kind: "adversarial-review",
+    title: "Grok Adversarial Review",
+    workspaceRoot,
+    jobClass: "review",
+    summary: `Adversarial review ${target.label}`
+  });
+  await runForegroundCommand(
+    job,
+    (progress) =>
+      executeReviewRun({
+        cwd,
+        base: options.base,
+        scope: options.scope,
+        model: normalizeRequestedModel(options.model),
+        budgetMs: normalizeBudgetMs(options["budget-ms"]),
+        promptName: "adversarial-review",
+        userFocus: focusText,
+        reviewLabel: "Adversarial Review",
+        jobTitle: "Grok Adversarial Review",
+        jobId: job.id,
+        onProgress: progress
+      }),
+    { json: options.json }
+  );
+}
+
 function readTaskPrompt(cwd, options, positionals) {
   if (options["prompt-file"]) {
     return fs.readFileSync(path.resolve(cwd, options["prompt-file"]), "utf8");
@@ -419,22 +480,47 @@ async function executeTaskRun(request) {
   if (!request.prompt && !resumeThreadId) {
     throw new Error("Provide a prompt, a prompt file, piped stdin, or use --resume-last.");
   }
-  const result = await runAcpTurn(workspaceRoot, {
-    resumeThreadId,
-    prompt: request.prompt,
-    defaultPrompt: resumeThreadId ? DEFAULT_CONTINUE_PROMPT : "",
-    model: request.model,
-    effort: request.effort,
-    sandbox: request.write ? "workspace" : "read-only",
-    budgetMs: request.budgetMs,
-    onProcessSpawn: (childPid) => updateJobChildPid(workspaceRoot, request.jobId, childPid),
-    onProcessExit: () => updateJobChildPid(workspaceRoot, request.jobId, null),
-    onProgress: request.onProgress,
-    persistThread: true,
-    threadName: resumeThreadId
-      ? null
-      : buildPersistentTaskThreadName(request.prompt || DEFAULT_CONTINUE_PROMPT)
-  });
+  let result;
+  try {
+    result = await runAcpTurn(workspaceRoot, {
+      resumeThreadId,
+      prompt: request.prompt,
+      defaultPrompt: resumeThreadId ? DEFAULT_CONTINUE_PROMPT : "",
+      model: request.model,
+      effort: request.effort,
+      sandbox: request.write ? "workspace" : "read-only",
+      budgetMs: request.budgetMs,
+      brokerFallback: request.brokerFallback,
+      onProcessSpawn: (childPid) => updateJobChildPid(workspaceRoot, request.jobId, childPid),
+      onProcessExit: () => updateJobChildPid(workspaceRoot, request.jobId, null),
+      onProgress: request.onProgress,
+      persistThread: request.persistThread ?? true,
+      threadName: resumeThreadId
+        ? null
+        : buildPersistentTaskThreadName(request.prompt || DEFAULT_CONTINUE_PROMPT)
+    });
+  } catch (error) {
+    if (error?.rpcCode !== BROKER_BUSY_RPC_CODE || request.jobClass !== "stop-review") {
+      throw error;
+    }
+    const payload = {
+      jobId: request.jobId,
+      status: "broker-busy",
+      brokerBusy: true,
+      rawOutput: ""
+    };
+    return {
+      exitStatus: 0,
+      threadId: null,
+      turnId: null,
+      payload,
+      rendered: renderTaskResult({ rawOutput: "", failureMessage: "Shared Grok ACP broker is busy." }, { title: "Grok Task" }),
+      summary: "Shared Grok ACP broker is busy.",
+      jobTitle: request.jobTitle ?? "Grok Task",
+      jobClass: request.jobClass ?? "task",
+      write: Boolean(request.write)
+    };
+  }
   const rawOutput = typeof result.finalMessage === "string" ? result.finalMessage : "";
   const failureMessage = result.error?.message ?? result.stderr ?? "";
   const payload = {
@@ -454,9 +540,47 @@ async function executeTaskRun(request) {
     rendered: renderTaskResult({ rawOutput, failureMessage }, { title: "Grok Task" }),
     summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, "Grok task finished.")),
     jobTitle: request.resumeLast ? "Grok Resume" : "Grok Task",
-    jobClass: "task",
+    jobClass: request.jobClass ?? "task",
     write: Boolean(request.write)
   };
+}
+
+async function handleStopReviewTask(argv) {
+  const { options, positionals } = parseCommandInput(argv, {
+    valueOptions: ["cwd", "budget-ms"],
+    booleanOptions: ["json"]
+  });
+  const cwd = resolveCommandCwd(options);
+  const workspaceRoot = resolveCommandWorkspace(options);
+  const prompt = positionals.join(" ") || readStdinIfPiped();
+  const job = createCompanionJob({
+    prefix: "stop-review",
+    kind: "task",
+    title: "Grok Stop Review",
+    workspaceRoot,
+    jobClass: "stop-review",
+    summary: shorten(prompt)
+  });
+  await runForegroundCommand(
+    job,
+    (progress) =>
+      executeTaskRun({
+        cwd,
+        model: null,
+        effort: null,
+        prompt,
+        write: false,
+        resumeLast: false,
+        budgetMs: normalizeBudgetMs(options["budget-ms"]),
+        brokerFallback: false,
+        persistThread: false,
+        jobClass: "stop-review",
+        jobTitle: "Grok Stop Review",
+        jobId: job.id,
+        onProgress: progress
+      }),
+    { json: options.json }
+  );
 }
 
 function updateJobChildPid(workspaceRoot, jobId, childPid) {
@@ -765,8 +889,14 @@ async function main() {
     case "review":
       await handleReview(argv);
       break;
+    case "adversarial-review":
+      await handleAdversarialReview(argv);
+      break;
     case "task":
       await handleTask(argv);
+      break;
+    case "stop-review-task":
+      await handleStopReviewTask(argv);
       break;
     case "task-worker":
       await handleTaskWorker(argv);

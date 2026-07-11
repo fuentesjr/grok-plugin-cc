@@ -11,9 +11,10 @@ function read(relativePath) {
   return fs.readFileSync(path.join(PLUGIN_ROOT, relativePath), "utf8");
 }
 
-test("Phase 1 command set has no transfer or adversarial-review surface", () => {
+test("command set includes adversarial-review but no transfer surface", () => {
   const commandFiles = fs.readdirSync(path.join(PLUGIN_ROOT, "commands")).sort();
   assert.deepEqual(commandFiles, [
+    "adversarial-review.md",
     "cancel.md",
     "rescue.md",
     "result.md",
@@ -165,18 +166,19 @@ test("status, result, and cancel commands are deterministic passthrough entrypoi
   assert.match(cancel, /grok-companion\.mjs" cancel "\$ARGUMENTS"/);
 });
 
-test("hooks keep session lifecycle wiring without a Phase 1 Stop hook", () => {
+test("hooks keep session lifecycle wiring and add the opt-in Stop review gate", () => {
   const source = read("hooks/hooks.json");
   assert.match(source, /SessionStart/);
   assert.match(source, /SessionEnd/);
   assert.match(source, /session-lifecycle-hook\.mjs/);
-  assert.doesNotMatch(source, /"Stop"/);
-  assert.doesNotMatch(source, /stop-review-gate/);
+  assert.match(source, /"Stop"/);
+  assert.match(source, /stop-review-gate-hook/);
 
   const parsed = JSON.parse(source);
-  assert.deepEqual(Object.keys(parsed.hooks).sort(), ["SessionEnd", "SessionStart"]);
+  assert.deepEqual(Object.keys(parsed.hooks).sort(), ["SessionEnd", "SessionStart", "Stop"]);
   assert.equal(parsed.hooks.SessionStart[0].hooks[0].timeout, 5);
   assert.equal(parsed.hooks.SessionEnd[0].hooks[0].timeout, 5);
+  assert.equal(parsed.hooks.Stop[0].hooks[0].timeout, 720);
 });
 
 test("setup command offers install and still points users at grok login", () => {
@@ -187,7 +189,8 @@ test("setup command offers install and still points users at grok login", () => 
   assert.match(setup, /\(Recommended\)/);
   assert.match(setup, /!grok login/);
   assert.doesNotMatch(setup, /codex/i);
-  assert.doesNotMatch(setup, /review-gate/i);
+  assert.match(setup, /--enable-review-gate/);
+  assert.match(setup, /--disable-review-gate/);
 });
 
 test("review-output schema matches the reference shape verbatim", () => {

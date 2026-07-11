@@ -21,12 +21,13 @@ import {
   teardownBrokerSession
 } from "../plugins/grok/scripts/lib/broker-lifecycle.mjs";
 import { terminateProcessTree } from "../plugins/grok/scripts/lib/process.mjs";
-import { loadState, resolveJobFile, upsertJob } from "../plugins/grok/scripts/lib/state.mjs";
+import { loadState, resolveJobFile, setConfig, upsertJob } from "../plugins/grok/scripts/lib/state.mjs";
 import { buildEnv, installFakeGrok, readFakeGrokState } from "./fake-grok-fixture.mjs";
 import { initGitRepo, makeTempDir, run, writeExecutable } from "./helpers.mjs";
 
 const COMPANION = fileURLToPath(new URL("../plugins/grok/scripts/grok-companion.mjs", import.meta.url));
 const HOOK = fileURLToPath(new URL("../plugins/grok/scripts/session-lifecycle-hook.mjs", import.meta.url));
+const STOP_HOOK = fileURLToPath(new URL("../plugins/grok/scripts/stop-review-gate-hook.mjs", import.meta.url));
 const PLUGIN_DATA = makeTempDir("grok-runtime-state-");
 const RUNTIME_DIR = "/private/tmp";
 
@@ -119,6 +120,20 @@ function setupFake(behavior = "task-ok") {
   return { binDir, cwd, env: runtimeEnv(binDir) };
 }
 
+function runStopHook(cwd, env, input = {}) {
+  return runScript(STOP_HOOK, [], {
+    cwd,
+    env,
+    input: JSON.stringify({ session_id: "stop-session", cwd, last_assistant_message: "Implemented slice 2.", ...input })
+  });
+}
+
+function writeStopReviewStub(source) {
+  const scriptPath = path.join(makeTempDir("grok-stop-stub-"), "companion-stub.mjs");
+  writeExecutable(scriptPath, source);
+  return scriptPath;
+}
+
 test("setup --json reports happy-path, logged-out, and missing-binary states", async (t) => {
   await t.test("happy path", () => {
     const { binDir, cwd, env } = setupFake("task-ok");
@@ -142,6 +157,7 @@ test("setup --json reports happy-path, logged-out, and missing-binary states", a
     const binDir = makeTempDir();
     const cwd = makeTempDir();
     writeExecutable(path.join(binDir, "node"), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
+    writeExecutable(path.join(binDir, "grok"), "#!/bin/sh\nexit 127\n");
     const env = { ...process.env, CLAUDE_PLUGIN_DATA: PLUGIN_DATA, PATH: binDir };
     const payload = jsonOutput(runCompanion(["setup", "--json", "-C", cwd], { cwd, env }));
     assert.equal(payload.ready, false);
@@ -191,6 +207,34 @@ test("setup stores verified Grok versions and reports one-time version drift", (
   const cleared = jsonOutput(runCompanion(["setup", "--json", "-C", cwd], { cwd, env }));
   assert.equal(cleared.versionDrift, null);
   assert.deepEqual(cleared.warnings, []);
+});
+
+test("setup toggles and reports the opt-in stop review gate", () => {
+  const { cwd, env } = setupFake("task-ok");
+  const enabled = jsonOutput(
+    runCompanion(["setup", "--enable-review-gate", "--json", "-C", cwd], { cwd, env })
+  );
+  assert.equal(enabled.reviewGateEnabled, true);
+  assert.equal(loadState(cwd).config.stopReviewGate, true);
+  assert.match(enabled.actionsTaken.join("\n"), new RegExp(cwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+  const human = runCompanion(["setup", "-C", cwd], { cwd, env });
+  assert.equal(human.status, 0, human.stderr);
+  assert.match(human.stdout, /stop review gate: enabled/i);
+
+  const disabled = jsonOutput(
+    runCompanion(["setup", "--disable-review-gate", "--json", "-C", cwd], { cwd, env })
+  );
+  assert.equal(disabled.reviewGateEnabled, false);
+  assert.equal(loadState(cwd).config.stopReviewGate, false);
+  assert.match(disabled.nextSteps.join("\n"), /--enable-review-gate/);
+
+  const conflict = runCompanion(
+    ["setup", "--enable-review-gate", "--disable-review-gate", "--json", "-C", cwd],
+    { cwd, env }
+  );
+  assert.equal(conflict.status, 1);
+  assert.match(conflict.stderr, /Choose either --enable-review-gate or --disable-review-gate\./);
 });
 
 test("foreground task stores its result, job record, and progress log", async (t) => {
@@ -338,6 +382,56 @@ test("review returns parsed JSON and tolerates an invalid final message", async 
   assert.equal(invalid.rawOutput, "This is not JSON.");
 });
 
+test("adversarial-review accepts focus text while review still rejects it", async (t) => {
+  const { binDir, cwd, env } = setupFake("review-ok");
+  t.after(() => cleanupBroker(cwd));
+  initGitRepo(cwd);
+  fs.writeFileSync(path.join(cwd, "app.js"), "export const value = 1;\n");
+  run("git", ["add", "app.js"], { cwd });
+  run("git", ["commit", "-m", "init"], { cwd });
+  fs.writeFileSync(path.join(cwd, "app.js"), "export const value = 2;\n");
+
+  const payload = jsonOutput(
+    runCompanion(
+      [
+        "adversarial-review",
+        "--json",
+        "--scope",
+        "working-tree",
+        "-C",
+        cwd,
+        "Challenge",
+        "the",
+        "module",
+        "boundaries"
+      ],
+      { cwd, env }
+    )
+  );
+  const job = JSON.parse(fs.readFileSync(resolveJobFile(cwd, payload.jobId), "utf8"));
+  assert.equal(job.kind, "adversarial-review");
+  assert.equal(job.jobClass, "review");
+  assert.equal(job.title, "Grok Adversarial Review");
+  assert.match(job.summary, /^Adversarial review /);
+  const snapshot = jsonOutput(runCompanion(["status", payload.jobId, "--json", "-C", cwd], { cwd, env }));
+  assert.equal(snapshot.job.kindLabel, "adversarial-review");
+  const prompt = readFakeGrokState(binDir).prompts.at(-1).prompt[0].text;
+  assert.match(prompt, /Challenge the module boundaries/);
+  assert.doesNotMatch(prompt, /\{\{USER_FOCUS\}\}/);
+  // Pin the companion -> adversarial-template wiring: assert content unique to
+  // adversarial-review.md so dropping `promptName` (falling back to review.md,
+  // which also interpolates USER_FOCUS) would fail here.
+  assert.match(prompt, /design_attack_surface/);
+  assert.doesNotMatch(prompt, /<attack_surface>/);
+
+  const rejected = runCompanion(
+    ["review", "--json", "--scope", "working-tree", "-C", cwd, "custom", "focus"],
+    { cwd, env }
+  );
+  assert.equal(rejected.status, 1);
+  assert.match(rejected.stderr, /`\/grok:review` does not accept custom focus text\./);
+});
+
 test("task-resume-candidate changes from unavailable to available after a task", async (t) => {
   const { cwd, env } = setupFake("task-ok");
   t.after(() => cleanupBroker(cwd));
@@ -348,6 +442,264 @@ test("task-resume-candidate changes from unavailable to available after a task",
   const after = jsonOutput(runCompanion(["task-resume-candidate", "--json", "-C", cwd], { cwd, env }));
   assert.equal(after.available, true);
   assert.ok(after.candidate.threadId);
+});
+
+test("stop-review dispatch is excluded from resume state and does not persist the thread", async (t) => {
+  const { binDir, cwd, env } = setupFake("stop-allow");
+  t.after(() => cleanupBroker(cwd));
+
+  const gate = jsonOutput(
+    runCompanion(["stop-review-task", "--json", "--budget-ms", "480000", "Review", "the", "turn"], {
+      cwd,
+      env
+    })
+  );
+  assert.equal(gate.rawOutput, "ALLOW: no blocking issue found");
+  const stateAfterGate = loadState(cwd);
+  const gateJob = stateAfterGate.jobs.find((job) => job.id === gate.jobId);
+  assert.equal(gateJob.jobClass, "stop-review");
+  assert.equal(stateAfterGate.lastTaskSession, null);
+  const noCandidate = jsonOutput(
+    runCompanion(["task-resume-candidate", "--json", "-C", cwd], { cwd, env })
+  );
+  assert.equal(noCandidate.available, false);
+
+  jsonOutput(runCompanion(["task", "--json", "-C", cwd, "Persistent", "task"], { cwd, env }));
+  const persisted = loadState(cwd).lastTaskSession;
+  jsonOutput(
+    runCompanion(["stop-review-task", "--json", "--budget-ms", "480000", "Review", "again"], {
+      cwd,
+      env
+    })
+  );
+  assert.deepEqual(loadState(cwd).lastTaskSession, persisted);
+  const candidate = jsonOutput(
+    runCompanion(["task-resume-candidate", "--json", "-C", cwd], { cwd, env })
+  );
+  assert.equal(candidate.available, true);
+  assert.notEqual(candidate.candidate.id, gate.jobId);
+  const agentSpawns = readFakeGrokState(binDir).spawns.filter((entry) => entry.mode === "agent");
+  assert.equal(agentSpawns.every((entry) => entry.model == null && entry.effort == null), true);
+});
+
+test("Stop hook fail-open preconditions do not dispatch a review", async (t) => {
+  await t.test("gate off", () => {
+    const { binDir, cwd, env } = setupFake("stop-block");
+    const result = runStopHook(cwd, env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.equal(readFakeGrokState(binDir), null);
+  });
+
+  await t.test("Grok unavailable", () => {
+    const binDir = makeTempDir();
+    const cwd = makeTempDir();
+    writeExecutable(path.join(binDir, "node"), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
+    writeExecutable(path.join(binDir, "grok"), "#!/bin/sh\nexit 127\n");
+    const env = runtimeEnv(binDir);
+    setConfig(cwd, "stopReviewGate", true);
+    const result = runStopHook(cwd, env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /not set up.*\/grok:setup/i);
+  });
+
+  await t.test("live running job", () => {
+    const { binDir, cwd, env } = setupFake("stop-block");
+    const worker = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    t.after(() => worker.kill());
+    setConfig(cwd, "stopReviewGate", true);
+    upsertJob(cwd, {
+      id: "live-task",
+      sessionId: "stop-session",
+      jobClass: "task",
+      status: "running",
+      pid: worker.pid,
+      startedAt: new Date().toISOString()
+    });
+    const result = runStopHook(cwd, env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Grok task live-task is still running/);
+    assert.equal(readFakeGrokState(binDir).prompts.length, 0);
+  });
+});
+
+test("Stop hook reviews stale running records and applies ALLOW/BLOCK verdicts", async (t) => {
+  await t.test("dead PID does not suppress an ALLOW review", async () => {
+    const { binDir, cwd, env } = setupFake("stop-allow");
+    t.after(() => cleanupBroker(cwd));
+    setConfig(cwd, "stopReviewGate", true);
+    upsertJob(cwd, {
+      id: "stale-task",
+      sessionId: "stop-session",
+      jobClass: "task",
+      status: "running",
+      pid: 2_147_483_647,
+      startedAt: new Date().toISOString()
+    });
+    const result = runStopHook(cwd, env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "");
+    const prompt = readFakeGrokState(binDir).prompts.at(-1).prompt[0].text;
+    assert.match(prompt, /Previous Claude response:\nImplemented slice 2\./);
+    assert.doesNotMatch(prompt, /\{\{CLAUDE_RESPONSE_BLOCK\}\}/);
+  });
+
+  await t.test("null-pid running job within the age cutoff suppresses the review", () => {
+    const { binDir, cwd, env } = setupFake("stop-allow");
+    setConfig(cwd, "stopReviewGate", true);
+    upsertJob(cwd, {
+      id: "fresh-nopid-task",
+      sessionId: "stop-session",
+      jobClass: "task",
+      status: "running",
+      pid: null,
+      startedAt: new Date().toISOString()
+    });
+    const result = runStopHook(cwd, env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Grok task fresh-nopid-task is still running/);
+    assert.equal(readFakeGrokState(binDir).prompts.length, 0);
+  });
+
+  await t.test("null-pid running job past the age cutoff is treated as stale and reviewed", async () => {
+    const { binDir, cwd, env } = setupFake("stop-allow");
+    t.after(() => cleanupBroker(cwd));
+    setConfig(cwd, "stopReviewGate", true);
+    // A crashed worker stops advancing updatedAt, so the newest timestamp goes stale.
+    const thirteenMinutesAgo = new Date(Date.now() - 13 * 60 * 1000).toISOString();
+    upsertJob(cwd, {
+      id: "stale-nopid-task",
+      sessionId: "stop-session",
+      jobClass: "task",
+      status: "running",
+      pid: null,
+      createdAt: thirteenMinutesAgo,
+      updatedAt: thirteenMinutesAgo,
+      startedAt: thirteenMinutesAgo
+    });
+    const result = runStopHook(cwd, env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.equal(readFakeGrokState(binDir).prompts.length, 1);
+  });
+
+  await t.test("BLOCK verdict emits a block decision", async () => {
+    const { cwd, env } = setupFake("stop-block");
+    t.after(() => cleanupBroker(cwd));
+    setConfig(cwd, "stopReviewGate", true);
+    const result = runStopHook(cwd, env);
+    assert.equal(result.status, 0, result.stderr);
+    const decision = JSON.parse(result.stdout);
+    assert.equal(decision.decision, "block");
+    assert.match(decision.reason, /tests are still failing/);
+  });
+
+  await t.test("empty final output blocks", async () => {
+    const { cwd, env } = setupFake("empty-output");
+    t.after(() => cleanupBroker(cwd));
+    setConfig(cwd, "stopReviewGate", true);
+    const result = runStopHook(cwd, env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).decision, "block");
+    assert.match(JSON.parse(result.stdout).reason, /no final output/i);
+  });
+
+  await t.test("preamble-shifted ALLOW verdict still allows", async () => {
+    const { cwd, env } = setupFake("stop-preamble-allow");
+    t.after(() => cleanupBroker(cwd));
+    setConfig(cwd, "stopReviewGate", true);
+    const result = runStopHook(cwd, env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "");
+  });
+
+  await t.test("preamble-shifted BLOCK verdict blocks with a clean reason", async () => {
+    const { cwd, env } = setupFake("stop-preamble-block");
+    t.after(() => cleanupBroker(cwd));
+    setConfig(cwd, "stopReviewGate", true);
+    const result = runStopHook(cwd, env);
+    assert.equal(result.status, 0, result.stderr);
+    const decision = JSON.parse(result.stdout);
+    assert.equal(decision.decision, "block");
+    assert.match(decision.reason, /sufficient-funds guard and can overdraft/);
+    // The preamble sentence must NOT leak into the reason relayed to the user.
+    assert.doesNotMatch(decision.reason, /I'll check the previous turn/);
+  });
+
+  await t.test("both distinct verdict tokens are ambiguous and fail closed", async () => {
+    const { cwd, env } = setupFake("stop-both-tokens");
+    t.after(() => cleanupBroker(cwd));
+    setConfig(cwd, "stopReviewGate", true);
+    const result = runStopHook(cwd, env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).decision, "block");
+  });
+
+  await t.test("DISALLOW substring is not a verdict token and fails closed", async () => {
+    const { cwd, env } = setupFake("stop-disallow-only");
+    t.after(() => cleanupBroker(cwd));
+    setConfig(cwd, "stopReviewGate", true);
+    const result = runStopHook(cwd, env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).decision, "block");
+  });
+});
+
+test("Stop hook classifies dispatch failures and structured broker busy correctly", async (t) => {
+  const cases = [
+    {
+      name: "structured broker busy allows",
+      source: 'process.stdout.write(JSON.stringify({ brokerBusy: true, status: "broker-busy" }));',
+      expectedDecision: null
+    },
+    {
+      name: "non-zero exit blocks",
+      source: 'process.stderr.write("dispatch exploded\\n"); process.exitCode = 7;',
+      expectedDecision: "block",
+      reason: /dispatch exploded/
+    },
+    {
+      name: "invalid JSON blocks",
+      source: 'process.stdout.write("not-json\\n");',
+      expectedDecision: "block",
+      reason: /invalid JSON/i
+    }
+  ];
+  for (const testCase of cases) {
+    await t.test(testCase.name, () => {
+      const { cwd, env } = setupFake("stop-allow");
+      setConfig(cwd, "stopReviewGate", true);
+      const result = runStopHook(cwd, {
+        ...env,
+        GROK_COMPANION_TEST_STOP_REVIEW_SCRIPT: writeStopReviewStub(testCase.source)
+      });
+      assert.equal(result.status, 0, result.stderr);
+      if (testCase.expectedDecision == null) {
+        assert.equal(result.stdout, "");
+      } else {
+        const decision = JSON.parse(result.stdout);
+        assert.equal(decision.decision, testCase.expectedDecision);
+        assert.match(decision.reason, testCase.reason);
+      }
+    });
+  }
+
+  await t.test("subprocess timeout blocks", () => {
+    const { cwd, env } = setupFake("stop-allow");
+    setConfig(cwd, "stopReviewGate", true);
+    const result = runStopHook(cwd, {
+      ...env,
+      GROK_COMPANION_TEST_STOP_REVIEW_SCRIPT: writeStopReviewStub("setInterval(() => {}, 1000);"),
+      GROK_COMPANION_STOP_REVIEW_TIMEOUT_MS: "100"
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const decision = JSON.parse(result.stdout);
+    assert.equal(decision.decision, "block");
+    assert.match(decision.reason, /timed out after 10 minutes/i);
+  });
 });
 
 test("broker routes read and write sessions to separate sandbox-profile children", async (t) => {
@@ -413,6 +765,45 @@ test("broker enforces busy-lock while always admitting session/cancel", async (t
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(readFakeGrokState(binDir).cancellations.length, 0);
   first.notify("session/cancel", { sessionId: session.sessionId });
+  assert.deepEqual(await prompt, { stopReason: "cancelled" });
+});
+
+test("stop-review dispatch returns structured broker busy without direct fallback", async (t) => {
+  if (!(await requireUnixSockets(t))) {
+    return;
+  }
+  const { binDir, cwd, env } = setupFake("hanging");
+  const broker = await ensureBrokerSession(cwd, { env, timeoutMs: 5000 });
+  assert.ok(broker);
+  t.after(() => cleanupBroker(cwd));
+  const owner = await GrokAcpClient.connect(cwd, {
+    brokerEndpoint: broker.endpoint,
+    brokerFallback: false,
+    env
+  });
+  t.after(() => owner.close().catch(() => {}));
+  const session = await owner.request("session/new", {
+    cwd,
+    mcpServers: [],
+    _meta: { [BROKER_SESSION_META_KEY]: { access: "read-only" } }
+  });
+  const prompt = owner.request("session/prompt", {
+    sessionId: session.sessionId,
+    prompt: [{ type: "text", text: "hang" }]
+  });
+  await waitFor(() => readFakeGrokState(binDir)?.prompts?.length === 1);
+
+  const result = runCompanion(
+    ["stop-review-task", "--json", "--budget-ms", "480000", "Review", "the", "turn"],
+    { cwd, env }
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.brokerBusy, true);
+  assert.equal(payload.status, "broker-busy");
+  assert.equal(readFakeGrokState(binDir).spawns.filter((entry) => entry.mode === "agent").length, 1);
+
+  owner.notify("session/cancel", { sessionId: session.sessionId });
   assert.deepEqual(await prompt, { stopReason: "cancelled" });
 });
 

@@ -529,6 +529,7 @@ export async function runAcpTurn(cwd, options = {}) {
       reuseExistingBroker: options.reuseExistingBroker,
       brokerEndpoint: options.brokerEndpoint,
       brokerTimeoutMs: options.brokerTimeoutMs,
+      brokerFallback: options.brokerFallback,
       requestTimeoutMs: options.requestTimeoutMs,
       initializeTimeoutMs: options.initializeTimeoutMs,
       sandbox,
@@ -598,7 +599,7 @@ export async function runAcpTurn(cwd, options = {}) {
 
 export async function runAcpReview(cwd, options = {}) {
   const schema = readOutputSchema(options.schemaPath ?? REVIEW_SCHEMA_PATH);
-  const template = loadPromptTemplate(PLUGIN_ROOT, "review");
+  const template = loadPromptTemplate(PLUGIN_ROOT, options.promptName ?? "review");
   const prompt = interpolateTemplate(template, {
     TARGET_LABEL: options.targetLabel ?? options.target?.label ?? "working tree diff",
     USER_FOCUS: options.userFocus ?? options.focusText ?? "(none)",

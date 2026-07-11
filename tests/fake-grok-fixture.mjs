@@ -244,7 +244,51 @@ function handlePrompt(message) {
     return;
   }
 
-  if (BEHAVIOR === "review-ok") {
+  if (BEHAVIOR === "stop-allow") {
+    emitUpdate(sessionId, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "ALLOW: no blocking issue found" }
+    });
+  } else if (BEHAVIOR === "stop-block") {
+    emitUpdate(sessionId, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "BLOCK: tests are still failing" }
+    });
+  } else if (BEHAVIOR === "stop-preamble-allow") {
+    // Real grok 0.2.93 shape: a preamble sentence glued onto the verdict, same line.
+    emitUpdate(sessionId, {
+      sessionUpdate: "agent_message_chunk",
+      content: {
+        type: "text",
+        text: "I'll verify whether the previous turn actually changed code, then review only those edits if present.ALLOW: sub(a, b) correctly mirrors add with a - b; no blockers."
+      }
+    });
+  } else if (BEHAVIOR === "stop-preamble-block") {
+    emitUpdate(sessionId, {
+      sessionUpdate: "agent_message_chunk",
+      content: {
+        type: "text",
+        text: "I'll check the previous turn's edits before deciding.BLOCK: the new parser drops the sufficient-funds guard and can overdraft."
+      }
+    });
+  } else if (BEHAVIOR === "stop-both-tokens") {
+    // Distinct verdict tokens both present → ambiguous → must fail closed.
+    emitUpdate(sessionId, {
+      sessionUpdate: "agent_message_chunk",
+      content: {
+        type: "text",
+        text: "I could ALLOW: this since it is small, but BLOCK: the missing guard is a real defect."
+      }
+    });
+  } else if (BEHAVIOR === "stop-disallow-only") {
+    // Contains the substring ALLOW: only inside DISALLOW: — no real verdict token.
+    emitUpdate(sessionId, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "My policy engine would DISALLOW: this without more context." }
+    });
+  } else if (BEHAVIOR === "empty-output") {
+    // Complete the turn without an assistant message.
+  } else if (BEHAVIOR === "review-ok") {
     emitUpdate(sessionId, {
       sessionUpdate: "agent_message_chunk",
       content: {
