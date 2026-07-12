@@ -102,7 +102,7 @@ Claude Code session
           spawned lazily on the first job that requests --write
 ```
 
-Sandbox profile binds at process spawn, so the Broker keeps up to two children alive rather than switching sandboxes per job. Write jobs run in place in the project working tree, not in an isolated worktree.
+Sandbox profile binds at process spawn, so the Broker keeps up to two children alive rather than switching sandboxes per job. Write jobs run in place in the project working tree, not in an isolated worktree. For the full picture — component map, job dispatch sequence, job lifecycle, and the stop-gate decision flow — see [docs/architecture.md](docs/architecture.md).
 
 Because agent mode has no interactive approval flow, children run auto-approved and the Broker owns the guardrails a headless CLI would otherwise provide:
 
@@ -154,6 +154,7 @@ Repo layout:
 ```
 .claude-plugin/marketplace.json   marketplace definition
 plugins/grok/                     the plugin: commands, agents, skills, scripts, hooks, schemas, prompts
+docs/architecture.md              diagrams: components, dispatch, job lifecycle, stop gate
 docs/adr/                         accepted architecture decisions
 docs/porting-map.md               module-by-module port plan vs. codex-plugin-cc
 tests/                            node --test suite + fake-grok ACP fixture

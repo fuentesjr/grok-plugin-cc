@@ -17,6 +17,9 @@ Claude Code's `/plugin update` silently no-ops on the stale snapshot.
 - README Troubleshooting section: symptom → cause → fix for the plugin's designed-behavior
   guardrails (stale install/broker, the stop-gate escape hatch, job budget, clean-tree
   refusal, no-commit rules), linking to the canonical sections.
+- `docs/architecture.md`: Mermaid diagrams of the component map, job dispatch sequence,
+  job lifecycle state machine, and stop-review-gate decision flow, validated with
+  mermaid-cli and linked from the README.
 
 ### Security
 - Surfaced the `grok --debug-file` warning into the README Safety model: its logs record the
