@@ -34,7 +34,7 @@ import {
   readStoredJob,
   resolveCancelableJob,
   resolveResultJob,
-  resolveStatusWaitTimeoutMs,
+  resolveStatusWaitDeadlineMs,
   sortJobsNewestFirst,
   STATUS_WAIT_TIMEOUT_EXIT_CODE
 } from "./lib/job-control.mjs";
@@ -82,8 +82,8 @@ function printUsage() {
       "                    Also overridable via GROK_COMPANION_BUDGET_MS.",
       "                    On expiry the turn is cancelled, then a short wind-down",
       "                    prompt asks Grok to write a handoff of remaining work.",
-      "  --timeout-ms <ms> For status --wait only. Defaults to the job's remaining",
-      `                    budget + ${DEFAULT_BUDGET_GRACE_MS}ms grace (not a fixed 4 minutes).`,
+      "  --timeout-ms <ms> For status --wait only. By default waits until the job's",
+      `                    budget deadline (budget + ${DEFAULT_BUDGET_GRACE_MS}ms grace from job start).`,
       `                    Wait timeout exits ${STATUS_WAIT_TIMEOUT_EXIT_CODE} with the job still active;`,
       "                    that is not a job failure."
     ].join("\n")
@@ -745,24 +745,36 @@ function isActiveStatus(status) {
 }
 
 async function waitForSingleJobSnapshot(cwd, reference, options = {}) {
-  const initial = buildSingleJobSnapshot(cwd, reference);
-  const storedJob = readStoredJob(initial.workspaceRoot, initial.job.id);
-  const timeoutMs = resolveStatusWaitTimeoutMs({
-    job: initial.job,
-    storedJob,
-    explicitTimeoutMs: options.timeoutMs
-  });
+  const waitStartedAt = Date.now();
   const pollIntervalMs = Number(options.pollIntervalMs ?? DEFAULT_STATUS_POLL_INTERVAL_MS);
-  const startedAt = Date.now();
-  let snapshot = initial;
+  let snapshot = buildSingleJobSnapshot(cwd, reference);
+  const storedJob = readStoredJob(snapshot.workspaceRoot, snapshot.job.id);
+
   while (true) {
     if (!isActiveStatus(snapshot.job.status)) {
-      return { snapshot, waitTimedOut: false, waitTimeoutMs: timeoutMs };
+      return { snapshot, waitTimedOut: false, waitTimeoutMs: Date.now() - waitStartedAt };
     }
-    if (Date.now() - startedAt >= timeoutMs) {
-      return { snapshot, waitTimedOut: true, waitTimeoutMs: timeoutMs };
+
+    // Re-resolve each poll so a queued→running transition re-anchors to the job budget.
+    const deadlineMs = resolveStatusWaitDeadlineMs({
+      job: snapshot.job,
+      storedJob,
+      explicitTimeoutMs: options.timeoutMs,
+      waitStartedAt,
+      now: Date.now()
+    });
+    const now = Date.now();
+    if (now >= deadlineMs) {
+      return {
+        snapshot,
+        waitTimedOut: true,
+        waitTimeoutMs: now - waitStartedAt,
+        waitDeadlineMs: deadlineMs
+      };
     }
-    await sleep(pollIntervalMs);
+
+    const sleepMs = Math.min(pollIntervalMs, Math.max(1, deadlineMs - now));
+    await sleep(sleepMs);
     snapshot = buildSingleJobSnapshot(cwd, reference);
   }
 }

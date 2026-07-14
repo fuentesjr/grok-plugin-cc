@@ -143,7 +143,8 @@ Open questions / residual risk:
 ## Build log — issue #3 status --wait timeout (2026-07-14)
 
 - Root cause: `DEFAULT_STATUS_WAIT_TIMEOUT_MS = 240_000` was shorter than the 20m job budget, so default `status --wait` threw exit 1 while healthy jobs still ran.
-- Fix: default wait timeout = remaining job budget + wind-down grace (`resolveStatusWaitTimeoutMs`); explicit `--timeout-ms` still wins. Wait timeout returns the still-active job snapshot and exits 2 (`STATUS_WAIT_TIMEOUT_EXIT_CODE`) with clear "not a job failure" wording.
+- Fix (best path): default wait uses an absolute **job budget deadline** (`startedAt + budgetMs + grace`), re-resolved each poll so queued→running re-anchors; explicit `--timeout-ms` is a fixed window from wait start. Wait timeout returns the still-active job snapshot and exits 2 (`STATUS_WAIT_TIMEOUT_EXIT_CODE`) with clear "not a job failure" wording.
+- Queued jobs without `startedAt` get a full allowance from "now" so queue time does not steal the productive wait window.
 
 ## Build log — issues #1 and #2 (2026-07-14)
 

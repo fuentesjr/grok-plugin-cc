@@ -59,7 +59,7 @@ Verify the CLI is ready:
 | `/grok:rescue <request>` | Delegates investigation, an explicit fix, or follow-up work to the `grok-rescue` subagent | `--background\|--wait`, `--resume\|--fresh`, `--model <model\|fast>`, `--effort <none\|minimal\|low\|medium\|high\|xhigh>` |
 | `/grok:review` | Runs a read-only Grok Build review of the working tree or a branch diff, focused on correctness defects | `--wait\|--background`, `--base <ref>`, `--scope auto\|working-tree\|branch` |
 | `/grok:adversarial-review [focus]` | Runs a read-only Grok Build review that challenges the design and approach rather than hunting line-level bugs; accepts free-text focus | `--wait\|--background`, `--base <ref>`, `--scope auto\|working-tree\|branch` |
-| `/grok:status [job-id]` | Shows active and recent Grok jobs for this repository | `--wait`, `--timeout-ms <ms>` (default: remaining job budget + grace), `--all` |
+| `/grok:status [job-id]` | Shows active and recent Grok jobs for this repository | `--wait`, `--timeout-ms <ms>` (default: job budget deadline), `--all` |
 | `/grok:result [job-id]` | Shows the stored final output for a finished job | — |
 | `/grok:cancel [job-id]` | Cancels an active background job | — |
 

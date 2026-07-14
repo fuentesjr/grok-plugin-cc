@@ -277,35 +277,69 @@ export function buildSingleJobSnapshot(cwd, reference, options = {}) {
   };
 }
 
+function resolveJobBudgetMs(storedJob, defaultBudgetMs = DEFAULT_JOB_BUDGET_MS) {
+  const storedBudget = Number(storedJob?.request?.budgetMs);
+  return Number.isFinite(storedBudget) && storedBudget > 0 ? Math.floor(storedBudget) : defaultBudgetMs;
+}
+
 /**
- * Resolve how long `status --wait` should poll.
- * Explicit `--timeout-ms` wins; otherwise wait for the job's remaining budget + wind-down grace.
+ * Absolute deadline for `status --wait`.
+ *
+ * - Explicit `--timeout-ms`: waitStartedAt + timeout (fixed window from when wait began).
+ * - Default: job startedAt + budget + wind-down grace. If the job is still queued
+ *   (no startedAt yet), the deadline is now + full allowance so queue time does not
+ *   eat the productive wait window; once the job starts, callers should re-resolve.
  */
-export function resolveStatusWaitTimeoutMs({
+export function resolveStatusWaitDeadlineMs({
   job,
   storedJob = null,
   explicitTimeoutMs = null,
+  waitStartedAt = Date.now(),
   now = Date.now(),
   defaultBudgetMs = DEFAULT_JOB_BUDGET_MS,
-  defaultGraceMs = DEFAULT_BUDGET_GRACE_MS,
-  minTimeoutMs = MIN_STATUS_WAIT_TIMEOUT_MS
+  defaultGraceMs = DEFAULT_BUDGET_GRACE_MS
 } = {}) {
   if (explicitTimeoutMs != null && explicitTimeoutMs !== "") {
     const parsed = Number(explicitTimeoutMs);
     if (!Number.isFinite(parsed) || parsed <= 0) {
       throw new Error("--timeout-ms must be a positive number.");
     }
-    return Math.floor(parsed);
+    return waitStartedAt + Math.floor(parsed);
   }
 
-  const storedBudget = Number(storedJob?.request?.budgetMs);
-  const budgetMs =
-    Number.isFinite(storedBudget) && storedBudget > 0 ? Math.floor(storedBudget) : defaultBudgetMs;
-  const totalAllowanceMs = budgetMs + defaultGraceMs;
-  const startMs = Date.parse(job?.startedAt ?? job?.createdAt ?? "");
-  const elapsedMs = Number.isFinite(startMs) ? Math.max(0, now - startMs) : 0;
-  const remainingMs = totalAllowanceMs - elapsedMs;
-  return Math.max(remainingMs, minTimeoutMs);
+  const totalAllowanceMs = resolveJobBudgetMs(storedJob, defaultBudgetMs) + defaultGraceMs;
+  const startedMs = Date.parse(job?.startedAt ?? "");
+  if (Number.isFinite(startedMs)) {
+    return startedMs + totalAllowanceMs;
+  }
+  // Still queued / no start stamp: grant a full allowance from "now".
+  return now + totalAllowanceMs;
+}
+
+/**
+ * Remaining ms until the wait deadline (floored at minTimeoutMs for overdue jobs).
+ * Prefer resolveStatusWaitDeadlineMs in the wait loop; this helper is for tests/docs.
+ */
+export function resolveStatusWaitTimeoutMs({
+  job,
+  storedJob = null,
+  explicitTimeoutMs = null,
+  waitStartedAt = Date.now(),
+  now = Date.now(),
+  defaultBudgetMs = DEFAULT_JOB_BUDGET_MS,
+  defaultGraceMs = DEFAULT_BUDGET_GRACE_MS,
+  minTimeoutMs = MIN_STATUS_WAIT_TIMEOUT_MS
+} = {}) {
+  const deadline = resolveStatusWaitDeadlineMs({
+    job,
+    storedJob,
+    explicitTimeoutMs,
+    waitStartedAt,
+    now,
+    defaultBudgetMs,
+    defaultGraceMs
+  });
+  return Math.max(deadline - now, minTimeoutMs);
 }
 
 export function resolveResultJob(cwd, reference) {

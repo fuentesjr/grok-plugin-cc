@@ -328,7 +328,7 @@ test("status --wait timeout exits 2 with still-active job state, not a job failu
   assert.equal(waited.status, 2, waited.stderr || waited.stdout);
   const payload = JSON.parse(waited.stdout);
   assert.equal(payload.waitTimedOut, true);
-  assert.equal(payload.waitTimeoutMs, 80);
+  assert.ok(payload.waitTimeoutMs >= 80, `waitTimeoutMs=${payload.waitTimeoutMs}`);
   assert.equal(payload.job.status, "running");
   assert.match(payload.error, /wait timeout, not a job failure/i);
 

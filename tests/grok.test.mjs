@@ -19,6 +19,7 @@ import {
   enrichJob,
   MIN_STATUS_WAIT_TIMEOUT_MS,
   readJobProgressPreview,
+  resolveStatusWaitDeadlineMs,
   resolveStatusWaitTimeoutMs
 } from "../plugins/grok/scripts/lib/job-control.mjs";
 import { interpolateTemplate } from "../plugins/grok/scripts/lib/prompts.mjs";
@@ -352,56 +353,82 @@ test("persistent task resume seeds context when the agent cannot load sessions",
   assert.match(readFakeGrokState(binDir).prompts.at(-1).prompt[0].text, /Prior final message/);
 });
 
-test("resolveStatusWaitTimeoutMs defaults to remaining job budget plus grace", () => {
+test("status --wait deadline follows job budget, not a fixed 4-minute cap", () => {
   const now = Date.parse("2026-07-14T12:00:00.000Z");
   const startedAt = new Date(now - 60_000).toISOString();
+  const budgetMs = 20 * 60 * 1000;
+  const startedMs = Date.parse(startedAt);
 
   assert.equal(
-    resolveStatusWaitTimeoutMs({
-      job: { startedAt },
-      storedJob: { request: { budgetMs: 20 * 60 * 1000 } },
+    resolveStatusWaitDeadlineMs({
+      job: { startedAt, status: "running" },
+      storedJob: { request: { budgetMs } },
       now
     }),
-    20 * 60 * 1000 + DEFAULT_BUDGET_GRACE_MS - 60_000
+    startedMs + budgetMs + DEFAULT_BUDGET_GRACE_MS
   );
 
+  // Remaining from now = deadline - now
   assert.equal(
     resolveStatusWaitTimeoutMs({
-      job: { startedAt },
-      storedJob: null,
-      now,
-      defaultBudgetMs: DEFAULT_JOB_BUDGET_MS
+      job: { startedAt, status: "running" },
+      storedJob: { request: { budgetMs } },
+      now
     }),
-    DEFAULT_JOB_BUDGET_MS + DEFAULT_BUDGET_GRACE_MS - 60_000
+    budgetMs + DEFAULT_BUDGET_GRACE_MS - 60_000
   );
 
+  // Queued with no startedAt: full allowance from now (queue time does not steal wait).
+  assert.equal(
+    resolveStatusWaitDeadlineMs({
+      job: { status: "queued", createdAt: new Date(now - 120_000).toISOString() },
+      storedJob: { request: { budgetMs: 60_000 } },
+      now
+    }),
+    now + 60_000 + DEFAULT_BUDGET_GRACE_MS
+  );
+
+  // Past the budget: remaining floors so a late waiter still gets a short poll.
   assert.equal(
     resolveStatusWaitTimeoutMs({
-      job: { startedAt: new Date(now - 30 * 60 * 1000).toISOString() },
+      job: { startedAt: new Date(now - 30 * 60 * 1000).toISOString(), status: "running" },
       storedJob: { request: { budgetMs: 60_000 } },
       now
     }),
     MIN_STATUS_WAIT_TIMEOUT_MS
   );
 
+  // Explicit --timeout-ms is a fixed window from when wait began.
+  const waitStartedAt = now - 500;
   assert.equal(
-    resolveStatusWaitTimeoutMs({
-      job: { startedAt },
-      storedJob: { request: { budgetMs: 20 * 60 * 1000 } },
+    resolveStatusWaitDeadlineMs({
+      job: { startedAt, status: "running" },
+      storedJob: { request: { budgetMs } },
       explicitTimeoutMs: "1500",
+      waitStartedAt,
       now
     }),
-    1500
+    waitStartedAt + 1500
   );
 
   assert.throws(
     () =>
-      resolveStatusWaitTimeoutMs({
+      resolveStatusWaitDeadlineMs({
         job: { startedAt },
         explicitTimeoutMs: "0",
         now
       }),
     /--timeout-ms must be a positive number/
+  );
+
+  // Default allowance is well above the old 4-minute footgun.
+  assert.ok(
+    resolveStatusWaitTimeoutMs({
+      job: { startedAt, status: "running" },
+      storedJob: null,
+      now,
+      defaultBudgetMs: DEFAULT_JOB_BUDGET_MS
+    }) > 240_000
   );
 });
 
