@@ -21,7 +21,8 @@
 
 set -uo pipefail
 
-REPO="${GROK_REPO:-/Users/sal/Projects/grok-plugin-cc}"
+# Default to the repo root (parent of scripts/), not a machine-local absolute path.
+REPO="${GROK_REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 COMP="$REPO/plugins/grok/scripts/grok-companion.mjs"
 HOOK="$REPO/plugins/grok/scripts/stop-review-gate-hook.mjs"
 STATE_ROOT="$HOME/.claude/plugins/data/grok-grok/state"
