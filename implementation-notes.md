@@ -128,7 +128,7 @@ Open questions / residual risk:
 | `plan` | `Plan updated: …` | `planning` (`job-control` presents it as `investigating`) |
 | `session/prompt` result | `Turn completed (<stopReason>).` or `Turn cancelled.` | `finalizing` or `cancelled` |
 
-- Resume strategy: persist `{id, name, finalMessage, updatedAt}` as `lastTaskSession` in the per-workspace `state.json`; `--resume-last` creates a fresh ACP session seeded with the prior session ID, prior final message, and `DEFAULT_CONTINUE_PROMPT`. No unverified `session/load` call is used.
+- Resume strategy: persist `{id, name, finalMessage, updatedAt}` as `lastTaskSession` in the per-workspace `state.json`. `--resume-last` prefers native ACP `session/load` when the agent advertises `loadSession` and the thread still exists (verified against real grok: cross-process load retains conversation history). Falls back to a seeded `session/new` + prior-final-message prompt when load is unsupported or the thread is gone.
 - Lockstep wording: `job-control.mjs` now recognizes `Starting Grok …`, `Session ready`, reasoning/plan/tool phrases, `Grok error`, budget cancellation, and ACP log-block titles. Rendered resume hints now use `/grok:rescue --resume <follow-up request>` instead of claiming direct CLI session resume.
 - ACP deviations: ACP exposes no verified turn ID, so `turnId` remains `null`; cross-process `cancelAcpTurn` requires the shared broker, while direct client budget cancellation uses the active connection. Review schema enforcement is prompt-driven by embedding the schema because ACP has no output-schema parameter. Broker-socket end-to-end tests remain for slice 3; direct spawn and busy-to-direct mechanics are implemented now.
 - Verified: `npm test` — 41 passed, 0 failed.
@@ -139,6 +139,12 @@ Open questions / residual risk:
 - Broker routing declaration: broker-bound `session/new` adds private `_meta.grokCompanion = { access: "read-only"|"workspace", budgetMs? }`; the broker removes that field before forwarding, independently injects standing `_meta.rules`, eagerly owns one `read-only` child, lazily owns one `workspace` child, and records `sessionId → child`. Default/invalid access is read-only.
 - Protocol decisions: the broker terminates client `initialize` locally, globally busy-locks requests with code `-32001`, always admits notification-only `session/cancel`, retains prompt ownership after client disconnect, enforces the optional session budget with `session/cancel`, removes mappings when a child dies, and respawns that profile on its next `session/new`. `GROK_COMPANION_RUNTIME_DIR` optionally relocates short-lived broker socket state for hermetic hosts; queued requests are persisted before detached spawn and `state.json` uses atomic replacement to avoid parent/worker races.
 - Verification: `node --test tests/*.test.mjs` — 61 tests total, 57 passed, 0 failed, 4 skipped. This execution sandbox rejects all `net.Server.listen()` calls with `EPERM`; the four Unix-socket broker/lifecycle cases are capability-gated and run on hosts that permit local sockets. All remaining CLI, fake-Grok, foreground/background, cancel, budget, write-guard, review, resume, and non-socket lifecycle paths passed.
+
+## Build log — issues #1 and #2 (2026-07-14)
+
+- **#2 resume**: `runAcpTurn` tries ACP `session/load` when `resumeThreadId` is set and the agent advertises `loadSession` (real grok: true; broker now advertises true and routes `session/load` like `session/new`). Same thread ID, plain continue prompt. On load failure or `loadSession: false`, falls back to seeded `session/new` + prior-final-message prompt.
+- **#1 budget**: productive budget still cancels mid-turn; a default 90s grace turn then sends `BUDGET_GRACE_PROMPT` so expiry can leave a handoff. Broker routing budget is `budgetMs + budgetGraceMs` so the backstop does not kill wind-down. Companion usage documents `--budget-ms` and the 20m default.
+- Verified: `node --test tests/*.test.mjs` (load/resume paths, grace handoff, prior suite).
 
 ## Build log — budget and ownership fixes (2026-07-10)
 

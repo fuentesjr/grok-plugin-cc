@@ -106,7 +106,8 @@ Sandbox profile binds at process spawn, so the Broker keeps up to two children a
 
 Because agent mode has no interactive approval flow, children run auto-approved and the Broker owns the guardrails a headless CLI would otherwise provide:
 
-- **Per-job budget**: every Job gets a 20-minute wall-clock budget by default (override with `--budget-ms` or `GROK_COMPANION_BUDGET_MS`); on expiry the Broker sends `session/cancel` and marks the Job failed.
+- **Per-job budget**: every Job gets a 20-minute wall-clock budget by default (override with `--budget-ms` or `GROK_COMPANION_BUDGET_MS`). On expiry the productive turn is cancelled, then a short wind-down prompt asks Grok to write a handoff of remaining work before the Job is marked failed.
+- **Native resume**: `--resume` / `task --resume-last` reloads the prior Grok ACP session via `session/load` when the thread still exists, so continuation keeps full conversation state. If the thread is gone, it falls back to a seeded new session with the prior final message.
 - **Standing rules**: every session carries prompt-level rules forbidding `git commit`/`git push` and work outside the workspace.
 - **Clean-tree requirement**: a background write Job requires a clean working tree, so it can't race with the live Claude Code session editing the same files. Commit, stash, or run with `--wait` instead.
 
@@ -137,7 +138,7 @@ Most surprises here are guardrails behaving as designed. Symptom → cause → f
 |---|---|---|
 | You updated or changed the plugin but nothing changed — a new command is missing, or a hook/behavior is stale | Two caching layers: the installed plugin snapshot, and the per-workspace Broker holding already-loaded code | Refresh **both**: bump the version → `/plugin` update → `/reload-plugins` for the snapshot ([Releasing](RELEASING.md)), **and** restart the Broker (new session, or kill its pid and remove `broker.json`). `/reload-plugins` does *not* restart the Broker. |
 | The stop-review gate won't let you end the session | The gate is enabled and keeps finding an issue (or an infra failure fails closed) | `/grok:setup --disable-review-gate` — see [Stop-review gate](#stop-review-gate-optional-off-by-default). |
-| A background job was cancelled on its own | The per-job 20-minute wall-clock budget expired | Expected; raise it with `--budget-ms` or `GROK_COMPANION_BUDGET_MS` — see [How it works](#how-it-works). |
+| A background job was cancelled on its own | The per-job 20-minute wall-clock budget expired (after a short wind-down handoff) | Expected; raise it with `--budget-ms` or `GROK_COMPANION_BUDGET_MS` — see [How it works](#how-it-works). |
 | A background write job was refused | Background writes require a clean working tree so they can't race your live edits | Commit or stash first, or run with `--wait` — see [How it works](#how-it-works). |
 | Grok won't `git commit` or `push` its work | By design — standing rules forbid it; you own commits | Expected; review the diff and commit yourself — see [Safety model](#safety-model). |
 

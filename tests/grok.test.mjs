@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  BUDGET_GRACE_PROMPT,
   DEFAULT_CONTINUE_PROMPT,
   buildPersistentTaskThreadName,
   findLatestTaskThread,
@@ -95,7 +96,8 @@ test("runAcpTurn cancels a hanging prompt when its wall-clock budget expires", a
     prompt: "Hang",
     env,
     disableBroker: true,
-    budgetMs: 40
+    budgetMs: 40,
+    budgetGraceMs: 0
   });
 
   assert.equal(result.status, 1);
@@ -103,6 +105,30 @@ test("runAcpTurn cancels a hanging prompt when its wall-clock budget expires", a
   assert.equal(result.cancelled, true);
   assert.equal(result.budgetExpired, true);
   assert.equal(readFakeGrokState(binDir).cancellations.length, 1);
+});
+
+test("runAcpTurn requests a wind-down handoff after budget expiry", async () => {
+  const { binDir, cwd, env } = setupFake("hanging");
+  const progress = [];
+  const result = await runAcpTurn(cwd, {
+    prompt: "Hang then hand off",
+    env,
+    disableBroker: true,
+    budgetMs: 40,
+    budgetGraceMs: 200,
+    onProgress: (event) => progress.push(event)
+  });
+
+  assert.equal(result.status, 1);
+  assert.equal(result.budgetExpired, true);
+  assert.equal(result.cancelled, true);
+  assert.match(result.finalMessage, /Handoff:/);
+  assert.ok(progress.some((event) => /wind-down handoff/i.test(event.message)));
+
+  const state = readFakeGrokState(binDir);
+  assert.equal(state.cancellations.length, 1);
+  assert.ok(state.prompts.some((entry) => /Budget expired\./i.test(entry.text)));
+  assert.ok(state.prompts.some((entry) => entry.text.includes(BUDGET_GRACE_PROMPT.slice(0, 20))));
 });
 
 test("model and effort overrides force direct spawn with workspace sandbox routing", async () => {
@@ -238,7 +264,7 @@ test("runAcpTurn surfaces the fake CLI's raw stderr tail on spawn failure", asyn
   );
 });
 
-test("persistent task resume seeds a new ACP session from stored context", async () => {
+test("persistent task resume loads the prior ACP session when available", async () => {
   const { binDir, cwd, env } = setupFake("task-ok");
   const threadName = buildPersistentTaskThreadName("Implement durable resume");
   const first = await runAcpTurn(cwd, {
@@ -258,13 +284,65 @@ test("persistent task resume seeds a new ACP session from stored context", async
     env,
     disableBroker: true
   });
+  assert.equal(second.threadId, first.threadId);
+  assert.equal(second.resumeMode, "load");
+
+  const state = readFakeGrokState(binDir);
+  assert.equal(state.loads.length, 1);
+  assert.equal(state.loads[0].sessionId, first.threadId);
+  const resumedPrompt = state.prompts.at(-1).prompt[0].text;
+  assert.equal(resumedPrompt, DEFAULT_CONTINUE_PROMPT);
+  assert.doesNotMatch(resumedPrompt, /Prior final message/);
+});
+
+test("persistent task resume falls back to a seeded new session when load fails", async () => {
+  const { binDir, cwd, env } = setupFake("load-fail");
+  const threadName = buildPersistentTaskThreadName("Implement durable resume");
+  const first = await runAcpTurn(cwd, {
+    prompt: "Implement durable resume",
+    persistThread: true,
+    threadName,
+    env,
+    disableBroker: true
+  });
+
+  const second = await runAcpTurn(cwd, {
+    resumeThreadId: first.threadId,
+    defaultPrompt: DEFAULT_CONTINUE_PROMPT,
+    persistThread: true,
+    env,
+    disableBroker: true
+  });
   assert.notEqual(second.threadId, first.threadId);
+  assert.equal(second.resumeMode, "seeded-new");
 
   const state = readFakeGrokState(binDir);
   const resumedPrompt = state.prompts.at(-1).prompt[0].text;
   assert.match(resumedPrompt, new RegExp(first.threadId));
   assert.match(resumedPrompt, /Continue from the prior task context/);
   assert.match(resumedPrompt, /Task completed\./);
+  assert.match(resumedPrompt, /Native ACP session loading was unavailable/);
+});
+
+test("persistent task resume seeds context when the agent cannot load sessions", async () => {
+  const { binDir, cwd, env } = setupFake("no-load-session");
+  const first = await runAcpTurn(cwd, {
+    prompt: "First task",
+    persistThread: true,
+    env,
+    disableBroker: true
+  });
+  const second = await runAcpTurn(cwd, {
+    resumeThreadId: first.threadId,
+    defaultPrompt: DEFAULT_CONTINUE_PROMPT,
+    persistThread: true,
+    env,
+    disableBroker: true
+  });
+  assert.equal(second.resumeMode, "seeded-new");
+  assert.notEqual(second.threadId, first.threadId);
+  assert.equal(readFakeGrokState(binDir).loads.length, 0);
+  assert.match(readFakeGrokState(binDir).prompts.at(-1).prompt[0].text, /Prior final message/);
 });
 
 test("job-control phase inference and block filtering stay in lockstep with ACP progress wording", () => {
@@ -277,6 +355,8 @@ test("job-control phase inference and block filtering stay in lockstep with ACP 
     ["Command completed: npm test.", "verifying"],
     ["Assistant message captured: Done.", "finalizing"],
     ["Budget expired; cancelling turn.", "cancelling"],
+    ["Budget expired; requesting wind-down handoff.", "cancelling"],
+    ["Session resumed (session_1).", "starting"],
     ["Turn cancelled.", "cancelled"],
     ["Grok error: failed to prompt", "failed"]
   ];

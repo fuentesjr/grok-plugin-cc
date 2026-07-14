@@ -30,5 +30,5 @@ When the helper returns Grok output:
 
 - If Grok errors or the stream is malformed, report the raw tail of the job log. Retry once, resuming the session, only if the failure looks transient (timeout, connection reset, truncated stream). Do not retry on a clear task or logic failure.
 - If Grok claims success but Claude's own verification fails, do one feedback round on the same session with the failing output. If the second attempt also fails, stop and report — either fix the residue yourself or hand the diff back to the user. Do not loop further.
-- If a job's budget expires, the broker cancels the session and marks the job failed; report that as a budget expiry, not a generic error, and preserve the job log reference.
+- If a job's budget expires, the productive turn is cancelled, a short wind-down handoff is requested, and the job is marked failed; report that as a budget expiry (not a generic error), surface any handoff text Grok wrote, and preserve the job log reference.
 - If auth has expired, direct the user to `/grok:setup` and `grok login`. Do not improvise an alternate auth flow.

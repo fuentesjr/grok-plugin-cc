@@ -10,6 +10,14 @@ Claude Code's `/plugin update` silently no-ops on the stale snapshot.
 
 ## [Unreleased]
 
+### Fixed
+- `#2` `--resume-last` now reloads the prior Grok ACP session via `session/load` when the
+  thread still exists (instead of always `session/new` with a summary prompt). Falls back
+  to the seeded summary prompt only when load is unavailable or the thread is gone.
+- `#1` Job budget expiry runs a short wind-down handoff prompt before failing the job, so
+  mid-turn work can leave a recoverable note of what remains. Companion usage now documents
+  `--budget-ms` and the 20-minute default.
+
 ### Added
 - Release discipline: this changelog, `RELEASING.md`, a `node --test` case that fails if
   the version strings drift or a changelog entry is missing, and `scripts/bump-version.sh`

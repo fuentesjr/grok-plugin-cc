@@ -79,7 +79,7 @@ sequenceDiagram
         BR-->>GC: routed to owning socket
         GC->>ST: progress → job log + phase/threadId patches
     end
-    alt budget expires (default 20 min)
+    alt budget expires (default 20 min; then short wind-down handoff)
         BR->>GK: session/cancel
         GK-->>BR: result (marked brokerBudgetExpired)
     end

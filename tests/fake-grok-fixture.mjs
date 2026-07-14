@@ -23,6 +23,7 @@ function defaultState() {
     initializations: [],
     sessions: [],
     prompts: [],
+    loads: [],
     cancellations: [],
     agentProcesses: []
   };
@@ -228,6 +229,26 @@ function emitWriteTurn(sessionId) {
   });
 }
 
+function promptText(prompt) {
+  if (typeof prompt === "string") {
+    return prompt;
+  }
+  if (!Array.isArray(prompt)) {
+    return "";
+  }
+  return prompt
+    .map((entry) => {
+      if (typeof entry === "string") {
+        return entry;
+      }
+      if (entry && typeof entry.text === "string") {
+        return entry.text;
+      }
+      return "";
+    })
+    .join("");
+}
+
 function handlePrompt(message) {
   const sessionId = message.params && message.params.sessionId;
   const session = state.sessions.find((candidate) => candidate.sessionId === sessionId);
@@ -236,11 +257,36 @@ function handlePrompt(message) {
     return;
   }
 
-  state.prompts.push({ sessionId, prompt: message.params.prompt });
+  const text = promptText(message.params.prompt);
+  state.prompts.push({ sessionId, prompt: message.params.prompt, text });
   saveState(state);
 
+  // Wind-down handoff after a cancelled productive turn should complete quickly.
+  if (/Budget expired\\./i.test(text) || /wind-down|concise handoff/i.test(text)) {
+    emitUpdate(sessionId, {
+      sessionUpdate: "agent_message_chunk",
+      content: {
+        type: "text",
+        text: "Handoff: completed partial work; remaining tests/docs unfinished; next step is finish the deferred items."
+      }
+    });
+    send({ id: message.id, result: { stopReason: "end_turn" } });
+    return;
+  }
+
   if (BEHAVIOR === "hanging") {
-    pendingPrompts.set(sessionId, message.id);
+    // Hang only the first prompt so budget-grace wind-down can complete.
+    if (!session.hungOnce) {
+      session.hungOnce = true;
+      saveState(state);
+      pendingPrompts.set(sessionId, message.id);
+      return;
+    }
+    emitUpdate(sessionId, {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "Post-hang completion." }
+    });
+    send({ id: message.id, result: { stopReason: "end_turn" } });
     return;
   }
 
@@ -355,7 +401,7 @@ input.on("line", (line) => {
         result: {
           protocolVersion: 1,
           agentCapabilities: {
-            loadSession: false,
+            loadSession: BEHAVIOR !== "no-load-session",
             promptCapabilities: { image: false, audio: false, embeddedContext: false }
           }
         }
@@ -376,8 +422,51 @@ input.on("line", (line) => {
         model: parsedArgs.model,
         effort: parsedArgs.effort,
         rules: message.params._meta && message.params._meta.rules,
-        meta: message.params._meta || null
+        meta: message.params._meta || null,
+        hungOnce: false
       });
+      saveState(state);
+      send({ id: message.id, result: { sessionId } });
+      break;
+    }
+
+    case "session/load": {
+      if (BEHAVIOR === "auth-required") {
+        authError(message.id);
+        break;
+      }
+      const sessionId = message.params && message.params.sessionId;
+      if (BEHAVIOR === "load-fail" || !sessionId) {
+        send({
+          id: message.id,
+          error: { code: -32000, message: "session not found: " + String(sessionId) }
+        });
+        break;
+      }
+      let session = state.sessions.find((candidate) => candidate.sessionId === sessionId);
+      if (!session) {
+        send({
+          id: message.id,
+          error: { code: -32000, message: "session not found: " + sessionId }
+        });
+        break;
+      }
+      // Re-bind the loaded session for this agent process (mirrors real grok).
+      session = {
+        ...session,
+        cwd: message.params.cwd || session.cwd,
+        mcpServers: message.params.mcpServers || session.mcpServers,
+        sandboxProfile: parsedArgs.sandboxProfile,
+        model: parsedArgs.model,
+        effort: parsedArgs.effort,
+        rules: (message.params._meta && message.params._meta.rules) || session.rules,
+        meta: message.params._meta || session.meta,
+        hungOnce: false
+      };
+      state.sessions = state.sessions.map((candidate) =>
+        candidate.sessionId === sessionId ? session : candidate
+      );
+      state.loads.push({ sessionId, cwd: session.cwd });
       saveState(state);
       send({ id: message.id, result: { sessionId } });
       break;

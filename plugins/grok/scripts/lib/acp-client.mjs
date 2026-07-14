@@ -84,10 +84,22 @@ class AcpClientBase {
     this.lineBuffer = "";
     this.transport = "unknown";
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    this.initializeResult = null;
+    this.agentCapabilities = null;
 
     this.exitPromise = new Promise((resolve) => {
       this.resolveExit = resolve;
     });
+  }
+
+  get supportsLoadSession() {
+    return Boolean(this.agentCapabilities?.loadSession);
+  }
+
+  recordInitializeResult(result) {
+    this.initializeResult = result ?? {};
+    this.agentCapabilities = this.initializeResult.agentCapabilities ?? null;
+    return this.initializeResult;
   }
 
   setNotificationHandler(handler) {
@@ -262,9 +274,11 @@ class SpawnedGrokAcpClient extends AcpClientBase {
       this.handleLine(line);
     });
 
-    await this.request("initialize", this.options.initializeParams ?? INITIALIZE_PARAMS, {
-      timeoutMs: this.options.initializeTimeoutMs ?? this.requestTimeoutMs
-    });
+    this.recordInitializeResult(
+      await this.request("initialize", this.options.initializeParams ?? INITIALIZE_PARAMS, {
+        timeoutMs: this.options.initializeTimeoutMs ?? this.requestTimeoutMs
+      })
+    );
   }
 
   async close() {
@@ -332,9 +346,11 @@ class BrokerGrokAcpClient extends AcpClientBase {
       });
     });
 
-    await this.request("initialize", this.options.initializeParams ?? INITIALIZE_PARAMS, {
-      timeoutMs: this.options.initializeTimeoutMs ?? this.requestTimeoutMs
-    });
+    this.recordInitializeResult(
+      await this.request("initialize", this.options.initializeParams ?? INITIALIZE_PARAMS, {
+        timeoutMs: this.options.initializeTimeoutMs ?? this.requestTimeoutMs
+      })
+    );
   }
 
   async close() {

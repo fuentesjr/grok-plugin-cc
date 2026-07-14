@@ -187,31 +187,40 @@ async function main() {
     }
   }
 
-  async function routeRequest(socket, message) {
-    if (message.method === "session/new") {
-      const routing = extractRouting(message.params ?? {});
-      const child = await getChild(routing.access);
-      const forwardedParams = {
-        ...(message.params ?? {}),
-        _meta: {
-          ...routing.meta,
-          rules: mergeStandingRules(message.params?.cwd ?? cwd, routing.meta.rules)
-        }
-      };
-      const result = await requestChild(child, "session/new", forwardedParams);
-      if (!result.sessionId) {
-        throw new Error("Grok ACP session/new did not return a sessionId.");
+  function rememberSessionOwner(sessionId, socket, child, routing) {
+    sessionOwners.set(sessionId, {
+      profile: routing.access,
+      child,
+      socket,
+      budgetMs: routing.budgetMs,
+      budgetTimer: null,
+      budgetExpired: false,
+      inFlight: false
+    });
+  }
+
+  async function routeSessionOpen(socket, message, method) {
+    const routing = extractRouting(message.params ?? {});
+    const child = await getChild(routing.access);
+    const forwardedParams = {
+      ...(message.params ?? {}),
+      _meta: {
+        ...routing.meta,
+        rules: mergeStandingRules(message.params?.cwd ?? cwd, routing.meta.rules)
       }
-      sessionOwners.set(result.sessionId, {
-        profile: routing.access,
-        child,
-        socket,
-        budgetMs: routing.budgetMs,
-        budgetTimer: null,
-        budgetExpired: false,
-        inFlight: false
-      });
-      return result;
+    };
+    const result = await requestChild(child, method, forwardedParams);
+    const sessionId = result?.sessionId ?? message.params?.sessionId ?? null;
+    if (!sessionId) {
+      throw new Error(`Grok ACP ${method} did not return a sessionId.`);
+    }
+    rememberSessionOwner(sessionId, socket, child, routing);
+    return result?.sessionId ? result : { ...(result ?? {}), sessionId };
+  }
+
+  async function routeRequest(socket, message) {
+    if (message.method === "session/new" || message.method === "session/load") {
+      return routeSessionOpen(socket, message, message.method);
     }
 
     const sessionId = message.params?.sessionId ?? null;
@@ -312,7 +321,7 @@ async function main() {
             result: {
               protocolVersion: 1,
               agentCapabilities: {
-                loadSession: false,
+                loadSession: true,
                 promptCapabilities: { image: false, audio: false, embeddedContext: false }
               },
               _meta: { broker: "grok-companion" }

@@ -68,12 +68,18 @@ function printUsage() {
     [
       "Usage:",
       "  node scripts/grok-companion.mjs setup [-C <path>] [--json] [--enable-review-gate|--disable-review-gate]",
-      "  node scripts/grok-companion.mjs review [-C <path>] [--base <ref>] [--scope <auto|working-tree|branch>] [--json]",
-      "  node scripts/grok-companion.mjs adversarial-review [-C <path>] [--base <ref>] [--scope <auto|working-tree|branch>] [--json] [focus]",
-      "  node scripts/grok-companion.mjs task [-C <path>] [--background|--wait] [--write] [--resume-last|--resume|--fresh] [--model <model|fast>] [--effort <value>] [prompt]",
+      "  node scripts/grok-companion.mjs review [-C <path>] [--base <ref>] [--scope <auto|working-tree|branch>] [--budget-ms <ms>] [--json]",
+      "  node scripts/grok-companion.mjs adversarial-review [-C <path>] [--base <ref>] [--scope <auto|working-tree|branch>] [--budget-ms <ms>] [--json] [focus]",
+      "  node scripts/grok-companion.mjs task [-C <path>] [--background|--wait] [--write] [--resume-last|--resume|--fresh] [--model <model|fast>] [--effort <value>] [--budget-ms <ms>] [prompt]",
       "  node scripts/grok-companion.mjs status [-C <path>] [job-id] [--wait] [--all] [--json]",
       "  node scripts/grok-companion.mjs result [-C <path>] [job-id] [--json]",
-      "  node scripts/grok-companion.mjs cancel [-C <path>] [job-id] [--json]"
+      "  node scripts/grok-companion.mjs cancel [-C <path>] [job-id] [--json]",
+      "",
+      "Notes:",
+      "  --budget-ms <ms>  Wall-clock job budget (default 1200000 = 20 minutes).",
+      "                   Also overridable via GROK_COMPANION_BUDGET_MS.",
+      "                   On expiry the turn is cancelled, then a short wind-down",
+      "                   prompt asks Grok to write a handoff of remaining work."
     ].join("\n")
   );
 }

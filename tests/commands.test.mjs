@@ -149,7 +149,7 @@ test("result-handling skill encodes trust-but-verify, result-report contract, an
   assert.match(resultHandling, /Retry once, resuming the session, only if the failure looks transient/i);
   assert.match(resultHandling, /do one feedback round on the same session with the failing output/i);
   assert.match(resultHandling, /if the second attempt also fails, stop and report/i);
-  assert.match(resultHandling, /budget expires, the broker cancels the session and marks the job failed/i);
+  assert.match(resultHandling, /budget expires.*wind-down handoff.*marked failed/i);
   assert.match(resultHandling, /auth has expired, direct the user to `\/grok:setup` and `grok login`/i);
 });
 

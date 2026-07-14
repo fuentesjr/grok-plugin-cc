@@ -157,8 +157,11 @@ function inferLegacyJobPhase(job, progressPreview = []) {
     if (line.startsWith("assistant message captured:") || line.startsWith("turn completed")) {
       return "finalizing";
     }
-    if (line.startsWith("budget expired;")) {
+    if (line.startsWith("budget expired;") || line.startsWith("budget expired,")) {
       return "cancelling";
+    }
+    if (line.startsWith("session resumed")) {
+      return "starting";
     }
     if (line.startsWith("turn cancelled")) {
       return "cancelled";

@@ -16,6 +16,14 @@ const TASK_THREAD_PREFIX = "Grok Companion Task";
 const DEFAULT_CONTINUE_PROMPT =
   "Continue from the prior task context. Pick the next highest-value step and follow through until the task is resolved.";
 export const DEFAULT_JOB_BUDGET_MS = 20 * 60 * 1000;
+/** Extra wall-clock after the productive budget for a wind-down handoff turn. */
+export const DEFAULT_BUDGET_GRACE_MS = 90 * 1000;
+export const BUDGET_GRACE_PROMPT = [
+  "Budget expired.",
+  "Stop starting new work immediately.",
+  "Write a concise handoff covering: (1) what you completed, (2) what remains unfinished (files/tests/docs), (3) the single next concrete step.",
+  "Do not begin new edits or long-running commands."
+].join(" ");
 
 function shorten(text, limit = 96) {
   const normalized = String(text ?? "").trim().replace(/\s+/g, " ");
@@ -169,13 +177,133 @@ function buildResumePrompt(resumeThreadId, previousSession, prompt) {
   const priorMessage = previousSession?.finalMessage?.trim() || "No final message was captured.";
   return [
     `Continue from the prior task context recorded for Grok session ${resumeThreadId}.`,
-    "ACP session loading is not enabled, so use the current workspace and the prior final message as context.",
+    "Native ACP session loading was unavailable, so use the current workspace and the prior final message as context.",
     "",
     "Prior final message:",
     priorMessage,
     "",
     prompt || DEFAULT_CONTINUE_PROMPT
   ].join("\n");
+}
+
+function isSessionMissingError(error) {
+  const text = String(error?.message ?? error ?? "");
+  return /not found|unknown session|no such session|does not exist|invalid session|session.*missing/i.test(text);
+}
+
+async function openAcpSession(client, cwd, options = {}) {
+  const resumeThreadId = options.resumeThreadId ?? null;
+  const sessionMeta = buildSessionMeta(cwd, options);
+  const baseParams = {
+    cwd,
+    mcpServers: options.mcpServers ?? [],
+    _meta: sessionMeta
+  };
+
+  if (resumeThreadId && client.supportsLoadSession) {
+    try {
+      const loaded = await client.request("session/load", {
+        ...baseParams,
+        sessionId: resumeThreadId
+      });
+      const threadId = loaded?.sessionId ?? resumeThreadId;
+      return {
+        threadId,
+        resumed: true,
+        mode: "load",
+        prompt: options.prompt || DEFAULT_CONTINUE_PROMPT
+      };
+    } catch (error) {
+      if (!isSessionMissingError(error) && !/session\/load|loadSession|unsupported method/i.test(String(error?.message ?? ""))) {
+        // Unexpected load failures still fall back to a seeded new session.
+      }
+      emitProgress(
+        options.onProgress,
+        `Native session load failed (${error instanceof Error ? error.message : String(error)}); seeding a fresh session from stored context.`,
+        "starting"
+      );
+    }
+  }
+
+  const session = await client.request("session/new", baseParams);
+  const threadId = session.sessionId;
+  if (!threadId) {
+    throw new Error("Grok ACP session/new did not return a sessionId.");
+  }
+
+  if (resumeThreadId) {
+    return {
+      threadId,
+      resumed: true,
+      mode: "seeded-new",
+      prompt: buildResumePrompt(resumeThreadId, options.previousSession, options.prompt || DEFAULT_CONTINUE_PROMPT)
+    };
+  }
+
+  return {
+    threadId,
+    resumed: false,
+    mode: "new",
+    prompt: options.prompt
+  };
+}
+
+async function runBudgetGraceTurn(client, sessionId, options = {}) {
+  const graceMs =
+    Number.isFinite(options.budgetGraceMs) && options.budgetGraceMs >= 0
+      ? Math.floor(options.budgetGraceMs)
+      : DEFAULT_BUDGET_GRACE_MS;
+  if (graceMs <= 0) {
+    return null;
+  }
+
+  emitProgress(
+    options.onProgress,
+    "Budget expired; requesting wind-down handoff.",
+    "cancelling",
+    { threadId: sessionId }
+  );
+
+  try {
+    return await capturePrompt(client, sessionId, BUDGET_GRACE_PROMPT, {
+      ...options,
+      budgetMs: graceMs
+    });
+  } catch (error) {
+    emitProgress(
+      options.onProgress,
+      `Budget wind-down failed: ${error instanceof Error ? error.message : String(error)}`,
+      "cancelling",
+      {
+        threadId: sessionId,
+        stderrMessage: error instanceof Error ? error.message : String(error)
+      }
+    );
+    return null;
+  }
+}
+
+function mergeGraceTurn(mainTurn, graceTurn) {
+  if (!graceTurn) {
+    return mainTurn;
+  }
+  const graceMessage = graceTurn.finalMessage?.trim() ?? "";
+  return {
+    ...mainTurn,
+    finalMessage: graceMessage || mainTurn.finalMessage,
+    reasoningSummary: [...(mainTurn.reasoningSummary ?? []), ...(graceTurn.reasoningSummary ?? [])],
+    plan: graceTurn.plan ?? mainTurn.plan,
+    toolCalls: [...(mainTurn.toolCalls ?? []), ...(graceTurn.toolCalls ?? [])],
+    touchedFiles: [...new Set([...(mainTurn.touchedFiles ?? []), ...(graceTurn.touchedFiles ?? [])])],
+    // Keep the productive turn's cancellation signal; the job still hit its budget.
+    budgetExpired: true,
+    stopReason: mainTurn.stopReason,
+    graceTurn: {
+      stopReason: graceTurn.stopReason,
+      finalMessage: graceTurn.finalMessage,
+      budgetExpired: graceTurn.budgetExpired
+    }
+  };
 }
 
 function buildToolProgress(update, toolCalls, isUpdate = false) {
@@ -505,11 +633,13 @@ export async function runAcpTurn(cwd, options = {}) {
     Number.isFinite(options.budgetMs) && options.budgetMs > 0
       ? Math.floor(options.budgetMs)
       : DEFAULT_JOB_BUDGET_MS;
+  const budgetGraceMs =
+    Number.isFinite(options.budgetGraceMs) && options.budgetGraceMs >= 0
+      ? Math.floor(options.budgetGraceMs)
+      : DEFAULT_BUDGET_GRACE_MS;
   const forceDirect = Boolean(model || options.effort);
   const previousSession = options.resumeThreadId ? getLastTaskSession(cwd) : null;
-  const effectivePrompt = options.resumeThreadId
-    ? buildResumePrompt(options.resumeThreadId, previousSession, prompt || DEFAULT_CONTINUE_PROMPT)
-    : prompt;
+  const continuePrompt = prompt || (options.resumeThreadId ? DEFAULT_CONTINUE_PROMPT : "");
 
   emitProgress(
     options.onProgress,
@@ -539,27 +669,39 @@ export async function runAcpTurn(cwd, options = {}) {
       onExit: options.onProcessExit
     },
     async (client) => {
-      const session = await client.request("session/new", {
-        cwd,
-        mcpServers: options.mcpServers ?? [],
-        _meta: buildSessionMeta(cwd, {
-          ...options,
-          brokerRouting:
-            client.transport === "broker"
-              ? {
-                  access: sandbox,
-                  budgetMs
-                }
-              : null
-        })
+      const brokerRouting =
+        client.transport === "broker"
+          ? {
+              access: sandbox,
+              // Broker backstop covers the productive budget plus wind-down grace.
+              budgetMs: budgetMs + budgetGraceMs
+            }
+          : null;
+      const opened = await openAcpSession(client, cwd, {
+        ...options,
+        prompt: continuePrompt,
+        previousSession,
+        brokerRouting
       });
-      const threadId = session.sessionId;
-      if (!threadId) {
-        throw new Error("Grok ACP session/new did not return a sessionId.");
-      }
-      emitProgress(options.onProgress, `Session ready (${threadId}).`, "starting", { threadId });
+      const threadId = opened.threadId;
+      emitProgress(
+        options.onProgress,
+        opened.mode === "load"
+          ? `Session resumed (${threadId}).`
+          : `Session ready (${threadId}).`,
+        "starting",
+        { threadId }
+      );
 
-      const turn = await capturePrompt(client, threadId, effectivePrompt, { ...options, budgetMs });
+      let turn = await capturePrompt(client, threadId, opened.prompt, { ...options, budgetMs });
+      if (turn.budgetExpired && budgetGraceMs > 0 && options.skipBudgetGrace !== true) {
+        const graceTurn = await runBudgetGraceTurn(client, threadId, {
+          ...options,
+          budgetGraceMs
+        });
+        turn = mergeGraceTurn(turn, graceTurn);
+      }
+
       if (options.persistThread) {
         setLastTaskSession(cwd, {
           id: threadId,
@@ -573,18 +715,24 @@ export async function runAcpTurn(cwd, options = {}) {
       }
 
       return {
-        status: turn.stopReason === "end_turn" ? 0 : 1,
+        // Budget expiry still fails the job even when wind-down produces a handoff.
+        status: turn.budgetExpired ? 1 : turn.stopReason === "end_turn" ? 0 : 1,
         threadId,
         turnId: null,
         finalMessage: turn.finalMessage,
         reasoningSummary: turn.reasoningSummary,
         turn: {
           id: null,
-          status: turn.stopReason === "end_turn" ? "completed" : turn.stopReason
+          status: turn.budgetExpired
+            ? "budget_expired"
+            : turn.stopReason === "end_turn"
+              ? "completed"
+              : turn.stopReason
         },
         stopReason: turn.stopReason,
         cancelled: turn.stopReason === "cancelled",
         budgetExpired: turn.budgetExpired,
+        resumeMode: opened.mode,
         error: null,
         stderr: client.stderr.trim(),
         fileChanges: [],
@@ -693,4 +841,4 @@ export function readOutputSchema(schemaPath) {
   return readJsonFile(path.resolve(schemaPath));
 }
 
-export { DEFAULT_CONTINUE_PROMPT, TASK_THREAD_PREFIX };
+export { DEFAULT_CONTINUE_PROMPT, TASK_THREAD_PREFIX, buildResumePrompt };
