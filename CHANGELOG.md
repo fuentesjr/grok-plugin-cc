@@ -10,31 +10,33 @@ Claude Code's `/plugin update` silently no-ops on the stale snapshot.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-14
+
+Runtime reliability fixes for long jobs and resume, plus docs/release tooling that had
+been sitting unreleased.
+
 ### Fixed
-- `#2` `--resume-last` now reloads the prior Grok ACP session via `session/load` when the
-  thread still exists (instead of always `session/new` with a summary prompt). Falls back
-  to the seeded summary prompt only when load is unavailable or the thread is gone.
-- `#1` Job budget expiry runs a short wind-down handoff prompt before failing the job, so
-  mid-turn work can leave a recoverable note of what remains. Companion usage now documents
-  `--budget-ms` and the 20-minute default.
+- `#2` `--resume-last` reloads the prior Grok ACP session via `session/load` when the
+  thread still exists (was always `session/new` with a summary prompt). Falls back to a
+  seeded new session only when load is unavailable or the thread is gone.
+- `#1` Job budget expiry cancels the productive turn, then runs a short wind-down handoff
+  so mid-turn work can leave a recoverable note. Companion usage documents `--budget-ms`
+  (default 20 minutes).
 - `#3` `status --wait` defaults to the job's budget deadline (`startedAt + budget + grace`),
-  re-resolved each poll (was a fixed 4 minutes). Wait timeout exits 2 and prints the
-  still-active job state so it is not conflated with a job failure.
+  re-resolved each poll (was a fixed 4 minutes that produced phantom failures). Wait
+  timeout exits 2 with the still-active job state — not a job failure.
+- Live-smoke script derives the repo root from its own path instead of a hard-coded
+  machine-local absolute path.
 
 ### Added
-- Release discipline: this changelog, `RELEASING.md`, a `node --test` case that fails if
-  the version strings drift or a changelog entry is missing, and `scripts/bump-version.sh`
-  to bump all manifests in lockstep and roll this file.
-- README Troubleshooting section: symptom → cause → fix for the plugin's designed-behavior
-  guardrails (stale install/broker, the stop-gate escape hatch, job budget, clean-tree
-  refusal, no-commit rules), linking to the canonical sections.
-- `docs/architecture.md`: Mermaid diagrams of the component map, job dispatch sequence,
-  job lifecycle state machine, and stop-review-gate decision flow, validated with
-  mermaid-cli and linked from the README.
+- Release discipline: changelog process, `RELEASING.md`, version-lockstep tests, and
+  `scripts/bump-version.sh`.
+- README Troubleshooting section (symptom → cause → fix for designed guardrails).
+- `docs/architecture.md`: component map, dispatch sequence, job lifecycle, and stop-gate
+  decision flow.
 
 ### Security
-- Surfaced the `grok --debug-file` warning into the README Safety model: its logs record the
-  OAuth bearer token in plaintext (previously noted only in internal implementation notes).
+- Documented the `grok --debug-file` OAuth-token-in-logs risk in the README Safety model.
 
 ## [0.2.0] - 2026-07-11
 
@@ -70,6 +72,7 @@ Phase 1 — core loop. Initial release.
 - Session-lifecycle hooks and broker guardrails: per-job wall-clock budget, standing
   no-commit/no-push rules, and a clean-tree requirement for background write jobs.
 
-[Unreleased]: https://github.com/fuentesjr/grok-plugin-cc/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/fuentesjr/grok-plugin-cc/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/fuentesjr/grok-plugin-cc/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/fuentesjr/grok-plugin-cc/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/fuentesjr/grok-plugin-cc/releases/tag/v0.1.0
