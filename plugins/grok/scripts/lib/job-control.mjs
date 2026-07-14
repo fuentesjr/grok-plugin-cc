@@ -1,12 +1,20 @@
 import fs from "node:fs";
 
-import { getSessionRuntimeStatus } from "./grok.mjs";
+import {
+  DEFAULT_BUDGET_GRACE_MS,
+  DEFAULT_JOB_BUDGET_MS,
+  getSessionRuntimeStatus
+} from "./grok.mjs";
 import { getConfig, listJobs, readJobFile, resolveJobFile } from "./state.mjs";
 import { SESSION_ID_ENV } from "./tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
 export const DEFAULT_MAX_STATUS_JOBS = 8;
 export const DEFAULT_MAX_PROGRESS_LINES = 4;
+/** Floor when a job's remaining budget has already elapsed. */
+export const MIN_STATUS_WAIT_TIMEOUT_MS = 5_000;
+/** Exit code for `status --wait` when the wait gave up while the job is still active. */
+export const STATUS_WAIT_TIMEOUT_EXIT_CODE = 2;
 
 export function sortJobsNewestFirst(jobs) {
   return [...jobs].sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
@@ -267,6 +275,37 @@ export function buildSingleJobSnapshot(cwd, reference, options = {}) {
     workspaceRoot,
     job: enrichJob(selected, { maxProgressLines: options.maxProgressLines })
   };
+}
+
+/**
+ * Resolve how long `status --wait` should poll.
+ * Explicit `--timeout-ms` wins; otherwise wait for the job's remaining budget + wind-down grace.
+ */
+export function resolveStatusWaitTimeoutMs({
+  job,
+  storedJob = null,
+  explicitTimeoutMs = null,
+  now = Date.now(),
+  defaultBudgetMs = DEFAULT_JOB_BUDGET_MS,
+  defaultGraceMs = DEFAULT_BUDGET_GRACE_MS,
+  minTimeoutMs = MIN_STATUS_WAIT_TIMEOUT_MS
+} = {}) {
+  if (explicitTimeoutMs != null && explicitTimeoutMs !== "") {
+    const parsed = Number(explicitTimeoutMs);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new Error("--timeout-ms must be a positive number.");
+    }
+    return Math.floor(parsed);
+  }
+
+  const storedBudget = Number(storedJob?.request?.budgetMs);
+  const budgetMs =
+    Number.isFinite(storedBudget) && storedBudget > 0 ? Math.floor(storedBudget) : defaultBudgetMs;
+  const totalAllowanceMs = budgetMs + defaultGraceMs;
+  const startMs = Date.parse(job?.startedAt ?? job?.createdAt ?? "");
+  const elapsedMs = Number.isFinite(startMs) ? Math.max(0, now - startMs) : 0;
+  const remainingMs = totalAllowanceMs - elapsedMs;
+  return Math.max(remainingMs, minTimeoutMs);
 }
 
 export function resolveResultJob(cwd, reference) {

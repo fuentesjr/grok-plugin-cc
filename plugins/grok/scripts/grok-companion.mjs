@@ -19,6 +19,7 @@ import {
   cancelAcpTurn,
   DEFAULT_CONTINUE_PROMPT,
   DEFAULT_JOB_BUDGET_MS,
+  DEFAULT_BUDGET_GRACE_MS,
   findLatestTaskThread,
   getGrokAuthStatus,
   getGrokAvailability,
@@ -33,7 +34,9 @@ import {
   readStoredJob,
   resolveCancelableJob,
   resolveResultJob,
-  sortJobsNewestFirst
+  resolveStatusWaitTimeoutMs,
+  sortJobsNewestFirst,
+  STATUS_WAIT_TIMEOUT_EXIT_CODE
 } from "./lib/job-control.mjs";
 import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
 import {
@@ -59,7 +62,6 @@ import {
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 
 const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
-const DEFAULT_STATUS_WAIT_TIMEOUT_MS = 240_000;
 const DEFAULT_STATUS_POLL_INTERVAL_MS = 2_000;
 const FAST_MODEL_ALIAS = "grok-composer-2.5-fast";
 
@@ -71,15 +73,19 @@ function printUsage() {
       "  node scripts/grok-companion.mjs review [-C <path>] [--base <ref>] [--scope <auto|working-tree|branch>] [--budget-ms <ms>] [--json]",
       "  node scripts/grok-companion.mjs adversarial-review [-C <path>] [--base <ref>] [--scope <auto|working-tree|branch>] [--budget-ms <ms>] [--json] [focus]",
       "  node scripts/grok-companion.mjs task [-C <path>] [--background|--wait] [--write] [--resume-last|--resume|--fresh] [--model <model|fast>] [--effort <value>] [--budget-ms <ms>] [prompt]",
-      "  node scripts/grok-companion.mjs status [-C <path>] [job-id] [--wait] [--all] [--json]",
+      "  node scripts/grok-companion.mjs status [-C <path>] [job-id] [--wait] [--timeout-ms <ms>] [--all] [--json]",
       "  node scripts/grok-companion.mjs result [-C <path>] [job-id] [--json]",
       "  node scripts/grok-companion.mjs cancel [-C <path>] [job-id] [--json]",
       "",
       "Notes:",
-      "  --budget-ms <ms>  Wall-clock job budget (default 1200000 = 20 minutes).",
-      "                   Also overridable via GROK_COMPANION_BUDGET_MS.",
-      "                   On expiry the turn is cancelled, then a short wind-down",
-      "                   prompt asks Grok to write a handoff of remaining work."
+      "  --budget-ms <ms>   Wall-clock job budget (default 1200000 = 20 minutes).",
+      "                    Also overridable via GROK_COMPANION_BUDGET_MS.",
+      "                    On expiry the turn is cancelled, then a short wind-down",
+      "                    prompt asks Grok to write a handoff of remaining work.",
+      "  --timeout-ms <ms> For status --wait only. Defaults to the job's remaining",
+      `                    budget + ${DEFAULT_BUDGET_GRACE_MS}ms grace (not a fixed 4 minutes).`,
+      `                    Wait timeout exits ${STATUS_WAIT_TIMEOUT_EXIT_CODE} with the job still active;`,
+      "                    that is not a job failure."
     ].join("\n")
   );
 }
@@ -739,19 +745,47 @@ function isActiveStatus(status) {
 }
 
 async function waitForSingleJobSnapshot(cwd, reference, options = {}) {
-  const timeoutMs = Number(options.timeoutMs ?? DEFAULT_STATUS_WAIT_TIMEOUT_MS);
+  const initial = buildSingleJobSnapshot(cwd, reference);
+  const storedJob = readStoredJob(initial.workspaceRoot, initial.job.id);
+  const timeoutMs = resolveStatusWaitTimeoutMs({
+    job: initial.job,
+    storedJob,
+    explicitTimeoutMs: options.timeoutMs
+  });
   const pollIntervalMs = Number(options.pollIntervalMs ?? DEFAULT_STATUS_POLL_INTERVAL_MS);
   const startedAt = Date.now();
+  let snapshot = initial;
   while (true) {
-    const snapshot = buildSingleJobSnapshot(cwd, reference);
     if (!isActiveStatus(snapshot.job.status)) {
-      return snapshot;
+      return { snapshot, waitTimedOut: false, waitTimeoutMs: timeoutMs };
     }
     if (Date.now() - startedAt >= timeoutMs) {
-      throw new Error(`Timed out waiting for job ${snapshot.job.id}.`);
+      return { snapshot, waitTimedOut: true, waitTimeoutMs: timeoutMs };
     }
     await sleep(pollIntervalMs);
+    snapshot = buildSingleJobSnapshot(cwd, reference);
   }
+}
+
+function outputWaitTimeout(snapshot, waitTimeoutMs, asJson) {
+  const detail =
+    `Timed out waiting for job ${snapshot.job.id} after ${waitTimeoutMs}ms; ` +
+    `job is still ${snapshot.job.status}` +
+    (snapshot.job.phase ? ` (phase: ${snapshot.job.phase})` : "") +
+    ". This is a wait timeout, not a job failure — re-run status, pass a larger --timeout-ms, or cancel the job.";
+  const payload = {
+    ...snapshot,
+    waitTimedOut: true,
+    waitTimeoutMs,
+    error: detail
+  };
+  if (asJson) {
+    outputResult(payload, true);
+  } else {
+    process.stderr.write(`${detail}\n`);
+    process.stdout.write(renderJobStatusReport(snapshot.job));
+  }
+  process.exitCode = STATUS_WAIT_TIMEOUT_EXIT_CODE;
 }
 
 async function handleStatus(argv) {
@@ -762,12 +796,19 @@ async function handleStatus(argv) {
   const cwd = resolveCommandCwd(options);
   const reference = positionals[0] ?? "";
   if (reference) {
-    const snapshot = options.wait
-      ? await waitForSingleJobSnapshot(cwd, reference, {
-          timeoutMs: options["timeout-ms"],
-          pollIntervalMs: options["poll-interval-ms"]
-        })
-      : buildSingleJobSnapshot(cwd, reference);
+    if (options.wait) {
+      const { snapshot, waitTimedOut, waitTimeoutMs } = await waitForSingleJobSnapshot(cwd, reference, {
+        timeoutMs: options["timeout-ms"],
+        pollIntervalMs: options["poll-interval-ms"]
+      });
+      if (waitTimedOut) {
+        outputWaitTimeout(snapshot, waitTimeoutMs, options.json);
+        return;
+      }
+      outputCommandResult(snapshot, renderJobStatusReport(snapshot.job), options.json);
+      return;
+    }
+    const snapshot = buildSingleJobSnapshot(cwd, reference);
     outputCommandResult(snapshot, renderJobStatusReport(snapshot.job), options.json);
     return;
   }

@@ -5,7 +5,9 @@ import test from "node:test";
 
 import {
   BUDGET_GRACE_PROMPT,
+  DEFAULT_BUDGET_GRACE_MS,
   DEFAULT_CONTINUE_PROMPT,
+  DEFAULT_JOB_BUDGET_MS,
   buildPersistentTaskThreadName,
   findLatestTaskThread,
   getGrokAuthStatus,
@@ -13,7 +15,12 @@ import {
   runAcpReview,
   runAcpTurn
 } from "../plugins/grok/scripts/lib/grok.mjs";
-import { enrichJob, readJobProgressPreview } from "../plugins/grok/scripts/lib/job-control.mjs";
+import {
+  enrichJob,
+  MIN_STATUS_WAIT_TIMEOUT_MS,
+  readJobProgressPreview,
+  resolveStatusWaitTimeoutMs
+} from "../plugins/grok/scripts/lib/job-control.mjs";
 import { interpolateTemplate } from "../plugins/grok/scripts/lib/prompts.mjs";
 import { buildEnv, installFakeGrok, readFakeGrokState } from "./fake-grok-fixture.mjs";
 import { makeTempDir } from "./helpers.mjs";
@@ -343,6 +350,59 @@ test("persistent task resume seeds context when the agent cannot load sessions",
   assert.notEqual(second.threadId, first.threadId);
   assert.equal(readFakeGrokState(binDir).loads.length, 0);
   assert.match(readFakeGrokState(binDir).prompts.at(-1).prompt[0].text, /Prior final message/);
+});
+
+test("resolveStatusWaitTimeoutMs defaults to remaining job budget plus grace", () => {
+  const now = Date.parse("2026-07-14T12:00:00.000Z");
+  const startedAt = new Date(now - 60_000).toISOString();
+
+  assert.equal(
+    resolveStatusWaitTimeoutMs({
+      job: { startedAt },
+      storedJob: { request: { budgetMs: 20 * 60 * 1000 } },
+      now
+    }),
+    20 * 60 * 1000 + DEFAULT_BUDGET_GRACE_MS - 60_000
+  );
+
+  assert.equal(
+    resolveStatusWaitTimeoutMs({
+      job: { startedAt },
+      storedJob: null,
+      now,
+      defaultBudgetMs: DEFAULT_JOB_BUDGET_MS
+    }),
+    DEFAULT_JOB_BUDGET_MS + DEFAULT_BUDGET_GRACE_MS - 60_000
+  );
+
+  assert.equal(
+    resolveStatusWaitTimeoutMs({
+      job: { startedAt: new Date(now - 30 * 60 * 1000).toISOString() },
+      storedJob: { request: { budgetMs: 60_000 } },
+      now
+    }),
+    MIN_STATUS_WAIT_TIMEOUT_MS
+  );
+
+  assert.equal(
+    resolveStatusWaitTimeoutMs({
+      job: { startedAt },
+      storedJob: { request: { budgetMs: 20 * 60 * 1000 } },
+      explicitTimeoutMs: "1500",
+      now
+    }),
+    1500
+  );
+
+  assert.throws(
+    () =>
+      resolveStatusWaitTimeoutMs({
+        job: { startedAt },
+        explicitTimeoutMs: "0",
+        now
+      }),
+    /--timeout-ms must be a positive number/
+  );
 });
 
 test("job-control phase inference and block filtering stay in lockstep with ACP progress wording", () => {

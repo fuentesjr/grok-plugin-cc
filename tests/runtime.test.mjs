@@ -298,6 +298,44 @@ test("cancel stops a hanging background task and preserves its log", async (t) =
   assert.match(fs.readFileSync(job.logFile, "utf8"), /Cancelled by user/);
 });
 
+test("status --wait timeout exits 2 with still-active job state, not a job failure", async (t) => {
+  const { cwd, env } = setupFake("hanging");
+  t.after(() => cleanupBroker(cwd));
+
+  const launch = jsonOutput(
+    runCompanion(["task", "--background", "--json", "-C", cwd, "Hang", "for", "wait"], { cwd, env })
+  );
+  await waitFor(() => {
+    const job = loadState(cwd).jobs.find((candidate) => candidate.id === launch.jobId);
+    return job?.status === "running" ? job : null;
+  });
+
+  const waited = runCompanion(
+    [
+      "status",
+      launch.jobId,
+      "--wait",
+      "--json",
+      "--timeout-ms",
+      "80",
+      "--poll-interval-ms",
+      "20",
+      "-C",
+      cwd
+    ],
+    { cwd, env }
+  );
+  assert.equal(waited.status, 2, waited.stderr || waited.stdout);
+  const payload = JSON.parse(waited.stdout);
+  assert.equal(payload.waitTimedOut, true);
+  assert.equal(payload.waitTimeoutMs, 80);
+  assert.equal(payload.job.status, "running");
+  assert.match(payload.error, /wait timeout, not a job failure/i);
+
+  const stillRunning = loadState(cwd).jobs.find((candidate) => candidate.id === launch.jobId);
+  assert.equal(stillRunning.status, "running");
+});
+
 test("default budget cancels a background job when no budget flag or public override is supplied", async (t) => {
   const { cwd, env } = setupFake("hanging");
   env.GROK_COMPANION_TEST_DEFAULT_BUDGET_MS = "60";

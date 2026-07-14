@@ -140,6 +140,11 @@ Open questions / residual risk:
 - Protocol decisions: the broker terminates client `initialize` locally, globally busy-locks requests with code `-32001`, always admits notification-only `session/cancel`, retains prompt ownership after client disconnect, enforces the optional session budget with `session/cancel`, removes mappings when a child dies, and respawns that profile on its next `session/new`. `GROK_COMPANION_RUNTIME_DIR` optionally relocates short-lived broker socket state for hermetic hosts; queued requests are persisted before detached spawn and `state.json` uses atomic replacement to avoid parent/worker races.
 - Verification: `node --test tests/*.test.mjs` — 61 tests total, 57 passed, 0 failed, 4 skipped. This execution sandbox rejects all `net.Server.listen()` calls with `EPERM`; the four Unix-socket broker/lifecycle cases are capability-gated and run on hosts that permit local sockets. All remaining CLI, fake-Grok, foreground/background, cancel, budget, write-guard, review, resume, and non-socket lifecycle paths passed.
 
+## Build log — issue #3 status --wait timeout (2026-07-14)
+
+- Root cause: `DEFAULT_STATUS_WAIT_TIMEOUT_MS = 240_000` was shorter than the 20m job budget, so default `status --wait` threw exit 1 while healthy jobs still ran.
+- Fix: default wait timeout = remaining job budget + wind-down grace (`resolveStatusWaitTimeoutMs`); explicit `--timeout-ms` still wins. Wait timeout returns the still-active job snapshot and exits 2 (`STATUS_WAIT_TIMEOUT_EXIT_CODE`) with clear "not a job failure" wording.
+
 ## Build log — issues #1 and #2 (2026-07-14)
 
 - **#2 resume**: `runAcpTurn` tries ACP `session/load` when `resumeThreadId` is set and the agent advertises `loadSession` (real grok: true; broker now advertises true and routes `session/load` like `session/new`). Same thread ID, plain continue prompt. On load failure or `loadSession: false`, falls back to seeded `session/new` + prior-final-message prompt.

@@ -17,6 +17,9 @@ Claude Code's `/plugin update` silently no-ops on the stale snapshot.
 - `#1` Job budget expiry runs a short wind-down handoff prompt before failing the job, so
   mid-turn work can leave a recoverable note of what remains. Companion usage now documents
   `--budget-ms` and the 20-minute default.
+- `#3` `status --wait` default timeout is now the job's remaining budget + wind-down grace
+  (was a fixed 4 minutes, shorter than the 20-minute job budget). Wait timeout exits 2 and
+  prints the still-active job state so it is not conflated with a job failure.
 
 ### Added
 - Release discipline: this changelog, `RELEASING.md`, a `node --test` case that fails if
