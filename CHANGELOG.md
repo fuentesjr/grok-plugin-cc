@@ -10,12 +10,34 @@ Claude Code's `/plugin update` silently no-ops on the stale snapshot.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-07-17
+
+Compatibility and isolation fix for Grok CLI 0.2.103 when the Grok and Codex plugins
+run in the same Claude Code session.
+
+### Fixed
+
+- `#4` Grok state now uses the plugin-specific `GROK_COMPANION_DATA_DIR` exported by
+  the SessionStart hook instead of re-exporting shared `CLAUDE_PLUGIN_DATA`. This prevents
+  Codex state and broker endpoints from contaminating Grok jobs.
+- Broker connections validate the `grok-companion` identity during `initialize`. A stale
+  foreign endpoint is discarded and the current job falls back to a direct Grok ACP child
+  instead of sending `session/new` to a Codex app-server. Persisted Grok broker records now
+  carry the same ownership marker.
+- Startup and shutdown never trust PID or filesystem paths from an unverified broker record,
+  so they cannot stop or remove another plugin's broker resources.
+
+### Changed
+
+- Hermetic and live compatibility baselines now target Grok CLI 0.2.103.
+
 ## [0.2.1] - 2026-07-14
 
 Runtime reliability fixes for long jobs and resume, plus docs/release tooling that had
 been sitting unreleased.
 
 ### Fixed
+
 - `#2` `--resume-last` reloads the prior Grok ACP session via `session/load` when the
   thread still exists (was always `session/new` with a summary prompt). Falls back to a
   seeded new session only when load is unavailable or the thread is gone.
@@ -29,6 +51,7 @@ been sitting unreleased.
   machine-local absolute path.
 
 ### Added
+
 - Release discipline: changelog process, `RELEASING.md`, version-lockstep tests, and
   `scripts/bump-version.sh`.
 - README Troubleshooting section (symptom → cause → fix for designed guardrails).
@@ -36,6 +59,7 @@ been sitting unreleased.
   decision flow.
 
 ### Security
+
 - Documented the `grok --debug-file` OAuth-token-in-logs risk in the README Safety model.
 
 ## [0.2.0] - 2026-07-11
@@ -43,6 +67,7 @@ been sitting unreleased.
 Phase 2 — parity with the codex plugin's second-phase surface.
 
 ### Added
+
 - `/grok:adversarial-review` command + companion subcommand: a design-challenge review that
   attacks the approach and its commitments (one-way doors, wrong-layer logic, symptom-patches,
   load-bearing assumptions) rather than line-level bugs, and accepts free-text focus.
@@ -56,6 +81,7 @@ Phase 2 — parity with the codex plugin's second-phase surface.
   the real `grok` CLI.
 
 ### Changed
+
 - `/grok:review` re-scoped from a skeptical/adversarial pass to a calm defect/correctness
   bug-hunt; design critique now lives in `/grok:adversarial-review`.
 
@@ -64,6 +90,7 @@ Phase 2 — parity with the codex plugin's second-phase surface.
 Phase 1 — core loop. Initial release.
 
 ### Added
+
 - Grok Build delegation and review from Claude Code via a persistent, per-workspace broker
   speaking ACP to sandboxed `grok agent` children.
 - Commands: `/grok:rescue`, `/grok:review`, `/grok:status`, `/grok:cancel`, `/grok:result`,
@@ -72,7 +99,8 @@ Phase 1 — core loop. Initial release.
 - Session-lifecycle hooks and broker guardrails: per-job wall-clock budget, standing
   no-commit/no-push rules, and a clean-tree requirement for background write jobs.
 
-[Unreleased]: https://github.com/fuentesjr/grok-plugin-cc/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/fuentesjr/grok-plugin-cc/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/fuentesjr/grok-plugin-cc/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/fuentesjr/grok-plugin-cc/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/fuentesjr/grok-plugin-cc/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/fuentesjr/grok-plugin-cc/releases/tag/v0.1.0

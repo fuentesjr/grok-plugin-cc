@@ -25,7 +25,7 @@ flowchart LR
         ws["workspace child (lazy)<br/>grok --sandbox workspace"]
     end
 
-    subgraph state["State dir (CLAUDE_PLUGIN_DATA/state/&lt;slug-hash&gt;)"]
+    subgraph state["State dir (GROK_COMPANION_DATA_DIR/state/&lt;slug-hash&gt;)"]
         sj["state.json — config, job index, last task session"]
         jf["jobs/&lt;id&gt;.json + &lt;id&gt;.log"]
         bj["broker.json — endpoint, pid"]
@@ -50,7 +50,9 @@ Notes, from `acp-client.mjs` (`GrokAcpClient.connect`) and `session-lifecycle-ho
 
 - The Broker is the default path, but not the only one. `--model` or `--effort` forces a **direct** `grok` spawn (sandbox profile still applies), and a busy/unreachable Broker falls back to a direct spawn unless `brokerFallback` is disabled (the stop-review gate disables it so it can detect "busy" instead).
 - The Broker is single-flight: one request socket at a time; concurrent callers get a `broker busy` RPC error.
-- `SessionEnd` sends `broker/shutdown`, kills this session's queued/running job processes, and removes their records.
+- Broker clients verify `_meta.broker: "grok-companion"` during `initialize`. A foreign persisted endpoint is discarded and the current request falls back to a direct Grok child.
+- `SessionEnd` sends `broker/shutdown` only after the same identity check, kills this session's queued/running job processes, and removes their records.
+- `SessionStart` copies Claude's plugin-scoped data path into `GROK_COMPANION_DATA_DIR`; exporting a Grok-specific name prevents another plugin's hook from redirecting Grok state.
 
 ## Job dispatch sequence
 

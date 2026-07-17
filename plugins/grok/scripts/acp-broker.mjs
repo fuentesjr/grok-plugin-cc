@@ -8,6 +8,7 @@ import process from "node:process";
 import { parseArgs } from "./lib/args.mjs";
 import {
   BROKER_BUSY_RPC_CODE,
+  BROKER_IDENTITY,
   BROKER_SESSION_META_KEY,
   GrokAcpClient
 } from "./lib/acp-client.mjs";
@@ -114,7 +115,7 @@ async function main() {
     return new Error(`Grok ${profile} ACP child died: ${detail}`);
   }
 
-  function routeNotification(profile, message) {
+  function routeNotification(message) {
     const sessionId = message.params?.sessionId ?? null;
     const owner = sessionId ? sessionOwners.get(sessionId) : null;
     const target = owner ? owner.socket : activeRequestSocket ?? activeStreamSocket;
@@ -130,7 +131,7 @@ async function main() {
       env: process.env
     });
     const child = { profile, client };
-    client.setNotificationHandler((message) => routeNotification(profile, message));
+    client.setNotificationHandler(routeNotification);
     children.set(profile, child);
     return child;
   }
@@ -324,7 +325,7 @@ async function main() {
                 loadSession: true,
                 promptCapabilities: { image: false, audio: false, embeddedContext: false }
               },
-              _meta: { broker: "grok-companion" }
+              _meta: { broker: BROKER_IDENTITY }
             }
           });
           continue;

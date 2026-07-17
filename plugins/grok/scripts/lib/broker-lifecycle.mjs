@@ -10,6 +10,7 @@ import { resolveStateDir } from "./state.mjs";
 
 export const PID_FILE_ENV = "GROK_COMPANION_ACP_PID_FILE";
 export const LOG_FILE_ENV = "GROK_COMPANION_ACP_LOG_FILE";
+export const BROKER_IDENTITY = "grok-companion";
 const BROKER_STATE_FILE = "broker.json";
 
 export function createBrokerSessionDir(prefix = "gxc-") {
@@ -43,18 +44,65 @@ export async function waitForBrokerEndpoint(endpoint, timeoutMs = 2000) {
 }
 
 export async function sendBrokerShutdown(endpoint) {
-  await new Promise((resolve) => {
+  return new Promise((resolve) => {
     const socket = connectToEndpoint(endpoint);
+    let buffer = "";
+    let settled = false;
+
+    function finish(shutdownSent) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      socket.end();
+      resolve(shutdownSent);
+    }
+
     socket.setEncoding("utf8");
     socket.on("connect", () => {
-      socket.write(`${JSON.stringify({ id: 1, method: "broker/shutdown", params: {} })}\n`);
+      socket.write(
+        `${JSON.stringify({
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: 1, clientCapabilities: {} }
+        })}\n`
+      );
     });
-    socket.on("data", () => {
-      socket.end();
-      resolve();
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      let newlineIndex = buffer.indexOf("\n");
+      while (newlineIndex !== -1) {
+        const line = buffer.slice(0, newlineIndex);
+        buffer = buffer.slice(newlineIndex + 1);
+        newlineIndex = buffer.indexOf("\n");
+        if (!line.trim()) {
+          continue;
+        }
+
+        let message;
+        try {
+          message = JSON.parse(line);
+        } catch {
+          finish(false);
+          return;
+        }
+
+        if (message.id === 1) {
+          if (message.result?._meta?.broker !== BROKER_IDENTITY) {
+            finish(false);
+            return;
+          }
+          socket.write(`${JSON.stringify({ id: 2, method: "broker/shutdown", params: {} })}\n`);
+          continue;
+        }
+        if (message.id === 2) {
+          finish(!message.error);
+          return;
+        }
+      }
     });
-    socket.on("error", resolve);
-    socket.on("close", resolve);
+    socket.on("error", () => finish(false));
+    socket.on("close", () => finish(false));
   });
 }
 
@@ -119,14 +167,16 @@ export async function ensureBrokerSession(cwd, options = {}) {
   }
 
   if (existing) {
-    teardownBrokerSession({
-      endpoint: existing.endpoint ?? null,
-      pidFile: existing.pidFile ?? null,
-      logFile: existing.logFile ?? null,
-      sessionDir: existing.sessionDir ?? null,
-      pid: existing.pid ?? null,
-      killProcess: options.killProcess ?? null
-    });
+    if (existing.brokerIdentity === BROKER_IDENTITY) {
+      teardownBrokerSession({
+        endpoint: existing.endpoint ?? null,
+        pidFile: existing.pidFile ?? null,
+        logFile: existing.logFile ?? null,
+        sessionDir: existing.sessionDir ?? null,
+        pid: existing.pid ?? null,
+        killProcess: options.killProcess ?? null
+      });
+    }
     clearBrokerSession(cwd);
   }
 
@@ -162,6 +212,7 @@ export async function ensureBrokerSession(cwd, options = {}) {
   }
 
   const session = {
+    brokerIdentity: BROKER_IDENTITY,
     endpoint,
     pidFile,
     logFile,

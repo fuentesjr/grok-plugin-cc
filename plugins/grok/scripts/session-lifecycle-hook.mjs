@@ -13,16 +13,23 @@ import {
   teardownBrokerSession
 } from "./lib/broker-lifecycle.mjs";
 import { terminateProcessTree } from "./lib/process.mjs";
-import { loadState, resolveStateFile, saveState } from "./lib/state.mjs";
+import { GROK_DATA_DIR_ENV, loadState, resolveStateFile, saveState } from "./lib/state.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 
 export const SESSION_ID_ENV = "GROK_COMPANION_SESSION_ID";
 export const TRANSCRIPT_PATH_ENV = "GROK_COMPANION_TRANSCRIPT_PATH";
-const PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
+const CLAUDE_PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
 
 function readHookInput() {
   const raw = fs.readFileSync(0, "utf8").trim();
-  return raw ? JSON.parse(raw) : {};
+  if (!raw) {
+    return {};
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Invalid session lifecycle hook input: ${error.message}`, { cause: error });
+  }
 }
 
 function shellEscape(value) {
@@ -73,7 +80,7 @@ function cleanupSessionJobs(cwd, sessionId) {
 function handleSessionStart(input) {
   appendEnvVar(SESSION_ID_ENV, input.session_id);
   appendEnvVar(TRANSCRIPT_PATH_ENV, input.transcript_path);
-  appendEnvVar(PLUGIN_DATA_ENV, process.env[PLUGIN_DATA_ENV]);
+  appendEnvVar(GROK_DATA_DIR_ENV, process.env[GROK_DATA_DIR_ENV] ?? process.env[CLAUDE_PLUGIN_DATA_ENV]);
 }
 
 async function handleSessionEnd(input) {
@@ -93,18 +100,18 @@ async function handleSessionEnd(input) {
   const sessionDir = brokerSession?.sessionDir ?? null;
   const pid = brokerSession?.pid ?? null;
 
-  if (brokerEndpoint) {
-    await sendBrokerShutdown(brokerEndpoint);
-  }
+  const brokerShutdownConfirmed = brokerEndpoint ? await sendBrokerShutdown(brokerEndpoint) : false;
   cleanupSessionJobs(cwd, input.session_id || process.env[SESSION_ID_ENV]);
-  teardownBrokerSession({
-    endpoint: brokerEndpoint,
-    pidFile,
-    logFile,
-    sessionDir,
-    pid,
-    killProcess: terminateProcessTree
-  });
+  if (brokerShutdownConfirmed) {
+    teardownBrokerSession({
+      endpoint: brokerEndpoint,
+      pidFile,
+      logFile,
+      sessionDir,
+      pid,
+      killProcess: terminateProcessTree
+    });
+  }
   clearBrokerSession(cwd);
 }
 

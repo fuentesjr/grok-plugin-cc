@@ -17,6 +17,7 @@ import {
   clearBrokerSession,
   ensureBrokerSession,
   loadBrokerSession,
+  saveBrokerSession,
   sendBrokerShutdown,
   teardownBrokerSession
 } from "../plugins/grok/scripts/lib/broker-lifecycle.mjs";
@@ -50,9 +51,17 @@ function runCompanion(args, { cwd, env, input } = {}) {
   return runScript(COMPANION, args, { cwd, env, input });
 }
 
+function parseJson(value) {
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    assert.fail(`Expected valid JSON: ${error.message}\n${value}`);
+  }
+}
+
 function jsonOutput(result) {
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  return JSON.parse(result.stdout);
+  return parseJson(result.stdout);
 }
 
 async function waitFor(predicate, timeoutMs = 8000, pollMs = 25) {
@@ -136,7 +145,7 @@ function writeStopReviewStub(source) {
 
 test("setup --json reports happy-path, logged-out, and missing-binary states", async (t) => {
   await t.test("happy path", () => {
-    const { binDir, cwd, env } = setupFake("task-ok");
+    const { cwd, env } = setupFake("task-ok");
     const payload = jsonOutput(runCompanion(["setup", "--json", "-C", cwd], { cwd, env }));
     assert.equal(payload.ready, true);
     assert.equal(payload.grok.available, true);
@@ -252,7 +261,7 @@ test("foreground task stores its result, job record, and progress log", async (t
   const job = state.jobs.find((candidate) => candidate.id === payload.jobId);
   assert.equal(job.status, "completed");
   assert.equal(job.threadId, payload.threadId);
-  const stored = JSON.parse(fs.readFileSync(resolveJobFile(cwd, payload.jobId), "utf8"));
+  const stored = parseJson(fs.readFileSync(resolveJobFile(cwd, payload.jobId), "utf8"));
   assert.equal(stored.result.rawOutput, "Task completed.");
   assert.equal(fs.existsSync(job.logFile), true);
   assert.match(fs.readFileSync(job.logFile, "utf8"), /Turn completed \(end_turn\)/);
@@ -326,7 +335,7 @@ test("status --wait timeout exits 2 with still-active job state, not a job failu
     { cwd, env }
   );
   assert.equal(waited.status, 2, waited.stderr || waited.stdout);
-  const payload = JSON.parse(waited.stdout);
+  const payload = parseJson(waited.stdout);
   assert.equal(payload.waitTimedOut, true);
   assert.ok(payload.waitTimeoutMs >= 80, `waitTimeoutMs=${payload.waitTimeoutMs}`);
   assert.equal(payload.job.status, "running");
@@ -356,7 +365,7 @@ test("default budget cancels a background job when no budget flag or public over
   assert.equal(snapshot.job.status, "failed");
   assert.equal(fs.existsSync(snapshot.job.logFile), true);
   assert.match(fs.readFileSync(snapshot.job.logFile, "utf8"), /Turn cancelled|Budget expired/);
-  const stored = JSON.parse(fs.readFileSync(resolveJobFile(cwd, launch.jobId), "utf8"));
+  const stored = parseJson(fs.readFileSync(resolveJobFile(cwd, launch.jobId), "utf8"));
   assert.equal(stored.request.budgetMs, 60);
 });
 
@@ -446,7 +455,7 @@ test("adversarial-review accepts focus text while review still rejects it", asyn
       { cwd, env }
     )
   );
-  const job = JSON.parse(fs.readFileSync(resolveJobFile(cwd, payload.jobId), "utf8"));
+  const job = parseJson(fs.readFileSync(resolveJobFile(cwd, payload.jobId), "utf8"));
   assert.equal(job.kind, "adversarial-review");
   assert.equal(job.jobClass, "review");
   assert.equal(job.title, "Grok Adversarial Review");
@@ -630,7 +639,7 @@ test("Stop hook reviews stale running records and applies ALLOW/BLOCK verdicts",
     setConfig(cwd, "stopReviewGate", true);
     const result = runStopHook(cwd, env);
     assert.equal(result.status, 0, result.stderr);
-    const decision = JSON.parse(result.stdout);
+    const decision = parseJson(result.stdout);
     assert.equal(decision.decision, "block");
     assert.match(decision.reason, /tests are still failing/);
   });
@@ -641,8 +650,8 @@ test("Stop hook reviews stale running records and applies ALLOW/BLOCK verdicts",
     setConfig(cwd, "stopReviewGate", true);
     const result = runStopHook(cwd, env);
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(JSON.parse(result.stdout).decision, "block");
-    assert.match(JSON.parse(result.stdout).reason, /no final output/i);
+    assert.equal(parseJson(result.stdout).decision, "block");
+    assert.match(parseJson(result.stdout).reason, /no final output/i);
   });
 
   await t.test("preamble-shifted ALLOW verdict still allows", async () => {
@@ -660,7 +669,7 @@ test("Stop hook reviews stale running records and applies ALLOW/BLOCK verdicts",
     setConfig(cwd, "stopReviewGate", true);
     const result = runStopHook(cwd, env);
     assert.equal(result.status, 0, result.stderr);
-    const decision = JSON.parse(result.stdout);
+    const decision = parseJson(result.stdout);
     assert.equal(decision.decision, "block");
     assert.match(decision.reason, /sufficient-funds guard and can overdraft/);
     // The preamble sentence must NOT leak into the reason relayed to the user.
@@ -673,7 +682,7 @@ test("Stop hook reviews stale running records and applies ALLOW/BLOCK verdicts",
     setConfig(cwd, "stopReviewGate", true);
     const result = runStopHook(cwd, env);
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(JSON.parse(result.stdout).decision, "block");
+    assert.equal(parseJson(result.stdout).decision, "block");
   });
 
   await t.test("DISALLOW substring is not a verdict token and fails closed", async () => {
@@ -682,7 +691,7 @@ test("Stop hook reviews stale running records and applies ALLOW/BLOCK verdicts",
     setConfig(cwd, "stopReviewGate", true);
     const result = runStopHook(cwd, env);
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(JSON.parse(result.stdout).decision, "block");
+    assert.equal(parseJson(result.stdout).decision, "block");
   });
 });
 
@@ -718,7 +727,7 @@ test("Stop hook classifies dispatch failures and structured broker busy correctl
       if (testCase.expectedDecision == null) {
         assert.equal(result.stdout, "");
       } else {
-        const decision = JSON.parse(result.stdout);
+        const decision = parseJson(result.stdout);
         assert.equal(decision.decision, testCase.expectedDecision);
         assert.match(decision.reason, testCase.reason);
       }
@@ -734,10 +743,44 @@ test("Stop hook classifies dispatch failures and structured broker busy correctl
       GROK_COMPANION_STOP_REVIEW_TIMEOUT_MS: "100"
     });
     assert.equal(result.status, 0, result.stderr);
-    const decision = JSON.parse(result.stdout);
+    const decision = parseJson(result.stdout);
     assert.equal(decision.decision, "block");
     assert.match(decision.reason, /timed out after 10 minutes/i);
   });
+});
+
+test("ensureBrokerSession does not teardown an unverified stale broker record", async (t) => {
+  if (!(await requireUnixSockets(t))) {
+    return;
+  }
+  const { cwd, env } = setupFake("task-ok");
+  const foreignProcess = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    detached: true,
+    stdio: "ignore"
+  });
+  foreignProcess.unref();
+  const foreignSessionDir = makeTempDir("foreign-stale-broker-");
+  saveBrokerSession(cwd, {
+    endpoint: `unix:${path.join(foreignSessionDir, "missing.sock")}`,
+    sessionDir: foreignSessionDir,
+    pid: foreignProcess.pid
+  });
+  t.after(async () => {
+    await cleanupBroker(cwd);
+    try {
+      terminateProcessTree(foreignProcess.pid);
+    } catch {
+      // The assertions below report an unexpected teardown.
+    }
+    fs.rmSync(foreignSessionDir, { recursive: true, force: true });
+  });
+
+  const broker = await ensureBrokerSession(cwd, { env, timeoutMs: 5000 });
+
+  assert.ok(broker);
+  assert.notEqual(broker.endpoint, `unix:${path.join(foreignSessionDir, "missing.sock")}`);
+  assert.doesNotThrow(() => process.kill(foreignProcess.pid, 0));
+  assert.equal(fs.existsSync(foreignSessionDir), true);
 });
 
 test("broker routes read and write sessions to separate sandbox-profile children", async (t) => {
@@ -836,7 +879,7 @@ test("stop-review dispatch returns structured broker busy without direct fallbac
     { cwd, env }
   );
   assert.equal(result.status, 0, result.stderr);
-  const payload = JSON.parse(result.stdout);
+  const payload = parseJson(result.stdout);
   assert.equal(payload.brokerBusy, true);
   assert.equal(payload.status, "broker-busy");
   assert.equal(readFakeGrokState(binDir).spawns.filter((entry) => entry.mode === "agent").length, 1);
@@ -906,7 +949,7 @@ test("broker disconnect cancels the orphaned prompt and releases busy ownership"
   clearBrokerSession(cwd);
 });
 
-test("SessionStart exports shell-escaped session state", () => {
+test("SessionStart exports shell-escaped, Grok-specific session state", () => {
   const { cwd, env } = setupFake("task-ok");
   const envFile = path.join(makeTempDir(), "claude.env");
   const start = runScript(HOOK, ["SessionStart"], {
@@ -918,7 +961,8 @@ test("SessionStart exports shell-escaped session state", () => {
   const exports = fs.readFileSync(envFile, "utf8");
   assert.match(exports, /GROK_COMPANION_SESSION_ID/);
   assert.match(exports, /GROK_COMPANION_TRANSCRIPT_PATH/);
-  assert.match(exports, /CLAUDE_PLUGIN_DATA/);
+  assert.match(exports, /GROK_COMPANION_DATA_DIR/);
+  assert.doesNotMatch(exports, /^export CLAUDE_PLUGIN_DATA=/m);
   assert.match(exports, /'"'"'/);
 });
 
@@ -959,6 +1003,40 @@ test("SessionEnd kills running jobs and removes jobs for the ending session", as
       return true;
     }
   });
+});
+
+test("SessionEnd clears but does not teardown an unverified broker record", async (t) => {
+  const { cwd, env } = setupFake("task-ok");
+  const foreignProcess = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    detached: true,
+    stdio: "ignore"
+  });
+  foreignProcess.unref();
+  const foreignSessionDir = makeTempDir("foreign-broker-");
+  saveBrokerSession(cwd, {
+    endpoint: `unix:${path.join(foreignSessionDir, "missing.sock")}`,
+    sessionDir: foreignSessionDir,
+    pid: foreignProcess.pid
+  });
+  t.after(() => {
+    try {
+      terminateProcessTree(foreignProcess.pid);
+    } catch {
+      // The assertion below reports an unexpected teardown.
+    }
+    fs.rmSync(foreignSessionDir, { recursive: true, force: true });
+  });
+
+  const end = runScript(HOOK, ["SessionEnd"], {
+    cwd,
+    env,
+    input: JSON.stringify({ session_id: "ending-session", cwd })
+  });
+
+  assert.equal(end.status, 0, end.stderr);
+  assert.doesNotThrow(() => process.kill(foreignProcess.pid, 0));
+  assert.equal(fs.existsSync(foreignSessionDir), true);
+  assert.equal(loadBrokerSession(cwd), null);
 });
 
 test("SessionEnd shuts down and clears the persisted broker", async (t) => {

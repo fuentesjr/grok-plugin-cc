@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
+import { readJsonFile } from "../plugins/grok/scripts/lib/fs.mjs";
 import { writeExecutable } from "./helpers.mjs";
 
 export function installFakeGrok(binDir, behavior = "task-ok") {
@@ -106,7 +107,7 @@ const state = loadState();
 if (args.length === 1 && args[0] === "--version") {
   state.spawns.push({ mode: "version", args });
   saveState(state);
-  process.stdout.write((process.env.FAKE_GROK_VERSION || "grok 0.2.93") + "\\n");
+  process.stdout.write((process.env.FAKE_GROK_VERSION || "grok 0.2.103") + "\\n");
   process.exit(0);
 }
 
@@ -509,7 +510,7 @@ input.on("line", (line) => {
 
 export function readFakeGrokState(binDir) {
   const statePath = path.join(binDir, "fake-grok-state.json");
-  return fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, "utf8")) : null;
+  return fs.existsSync(statePath) ? readJsonFile(statePath) : null;
 }
 
 export function buildEnv(binDir, overrides = {}) {

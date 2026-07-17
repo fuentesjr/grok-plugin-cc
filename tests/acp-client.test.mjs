@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
+import net from "node:net";
+import path from "node:path";
 import test from "node:test";
 
 import { GrokAcpClient } from "../plugins/grok/scripts/lib/acp-client.mjs";
+import {
+  loadBrokerSession,
+  saveBrokerSession,
+  sendBrokerShutdown
+} from "../plugins/grok/scripts/lib/broker-lifecycle.mjs";
 import { buildEnv, installFakeGrok, readFakeGrokState } from "./fake-grok-fixture.mjs";
 import { makeTempDir } from "./helpers.mjs";
 
@@ -30,6 +37,58 @@ async function waitForProcessExit(pid, timeoutMs = 3000) {
   throw new Error(`Process ${pid} did not exit.`);
 }
 
+function parseJson(value) {
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    assert.fail(`Expected valid JSON: ${error.message}\n${value}`);
+  }
+}
+
+async function startWrongBroker(t) {
+  const socketPath = path.join(makeTempDir(), "codex-broker.sock");
+  const methods = [];
+  const server = net.createServer((socket) => {
+    socket.setEncoding("utf8");
+    let buffer = "";
+    socket.on("data", (chunk) => {
+      buffer += chunk;
+      let newlineIndex = buffer.indexOf("\n");
+      while (newlineIndex !== -1) {
+        const line = buffer.slice(0, newlineIndex);
+        buffer = buffer.slice(newlineIndex + 1);
+        newlineIndex = buffer.indexOf("\n");
+        if (!line.trim()) {
+          continue;
+        }
+        const message = parseJson(line);
+        methods.push(message.method);
+        if (message.method === "initialize") {
+          socket.write(
+            `${JSON.stringify({
+              id: message.id,
+              result: { protocolVersion: 1, _meta: { broker: "codex-companion" } }
+            })}\n`
+          );
+        } else {
+          socket.write(
+            `${JSON.stringify({
+              id: message.id,
+              error: { code: -32602, message: "unknown variant `session/new`, expected `thread/start`" }
+            })}\n`
+          );
+        }
+      }
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  return { endpoint: `unix:${socketPath}`, methods };
+}
+
 test("GrokAcpClient performs the verified ACP handshake and creates a session", async () => {
   const binDir = makeTempDir();
   const cwd = makeTempDir();
@@ -54,6 +113,38 @@ test("GrokAcpClient performs the verified ACP handshake and creates a session", 
   });
   assert.equal(state.sessions[0].cwd, cwd);
   assert.equal(state.sessions[0].rules, "stay safe");
+});
+
+test("GrokAcpClient rejects a persisted Codex broker and falls back to Grok directly", async (t) => {
+  const binDir = makeTempDir();
+  const cwd = makeTempDir();
+  installFakeGrok(binDir, "task-ok");
+  const wrongBroker = await startWrongBroker(t);
+  saveBrokerSession(cwd, { endpoint: wrongBroker.endpoint });
+
+  const client = await GrokAcpClient.connect(cwd, {
+    reuseExistingBroker: true,
+    env: buildEnv(binDir),
+    requestTimeoutMs: 15000
+  });
+
+  try {
+    assert.equal(client.transport, "direct");
+    const session = await client.request("session/new", { cwd, mcpServers: [] });
+    assert.equal(session.sessionId, "session_1");
+  } finally {
+    await client.close();
+  }
+
+  assert.deepEqual(wrongBroker.methods, ["initialize"]);
+  assert.equal(loadBrokerSession(cwd), null);
+});
+
+test("sendBrokerShutdown does not stop a foreign broker", async (t) => {
+  const wrongBroker = await startWrongBroker(t);
+
+  assert.equal(await sendBrokerShutdown(wrongBroker.endpoint), false);
+  assert.deepEqual(wrongBroker.methods, ["initialize"]);
 });
 
 test("GrokAcpClient dispatches notifications and cancels an in-flight prompt", async () => {

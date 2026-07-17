@@ -37,13 +37,16 @@ task flags `--write`, `--resume`/`--resume-last`/`--fresh`, `--background`,
 ## Env vars
 
 `GROK_COMPANION_SESSION_ID`, `GROK_COMPANION_TRANSCRIPT_PATH`,
-`GROK_COMPANION_ACP_ENDPOINT`, plus standard `CLAUDE_PLUGIN_DATA`,
-`CLAUDE_PLUGIN_ROOT`, `CLAUDE_ENV_FILE`.
+`GROK_COMPANION_ACP_ENDPOINT`, `GROK_COMPANION_DATA_DIR`, plus standard
+`CLAUDE_PLUGIN_DATA`, `CLAUDE_PLUGIN_ROOT`, `CLAUDE_ENV_FILE`. The SessionStart hook
+captures the plugin-scoped `CLAUDE_PLUGIN_DATA` value under `GROK_COMPANION_DATA_DIR`;
+it must not re-export the shared name because multiple plugin hooks share one environment.
 
 ## Command .md conventions (from reference)
 
 Frontmatter: `description`, `argument-hint`, `allowed-tools`, and
 `disable-model-invocation: true` on passthroughs. Two idioms:
+
 - Passthrough (`cancel`, `result`, `status`): body is one inline
   `` !`node "${CLAUDE_PLUGIN_ROOT}/scripts/grok-companion.mjs" <sub> "$ARGUMENTS"` `` line + render instructions.
 - Model-orchestrated (`review`, `setup`, `rescue`): AskUserQuestion exactly once

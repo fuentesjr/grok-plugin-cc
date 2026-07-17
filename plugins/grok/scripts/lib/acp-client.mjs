@@ -4,11 +4,18 @@ import { spawn } from "node:child_process";
 import readline from "node:readline";
 
 import { parseBrokerEndpoint } from "./broker-endpoint.mjs";
-import { ensureBrokerSession, loadBrokerSession } from "./broker-lifecycle.mjs";
+import {
+  BROKER_IDENTITY,
+  clearBrokerSession,
+  ensureBrokerSession,
+  loadBrokerSession
+} from "./broker-lifecycle.mjs";
 import { terminateProcessTree } from "./process.mjs";
 
 export const BROKER_ENDPOINT_ENV = "GROK_COMPANION_ACP_ENDPOINT";
 export const BROKER_BUSY_RPC_CODE = -32001;
+export { BROKER_IDENTITY };
+export const BROKER_IDENTITY_ERROR_CODE = "ERR_GROK_BROKER_IDENTITY";
 export const BROKER_SESSION_META_KEY = "grokCompanion";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
@@ -346,11 +353,19 @@ class BrokerGrokAcpClient extends AcpClientBase {
       });
     });
 
-    this.recordInitializeResult(
-      await this.request("initialize", this.options.initializeParams ?? INITIALIZE_PARAMS, {
-        timeoutMs: this.options.initializeTimeoutMs ?? this.requestTimeoutMs
-      })
-    );
+    const result = await this.request("initialize", this.options.initializeParams ?? INITIALIZE_PARAMS, {
+      timeoutMs: this.options.initializeTimeoutMs ?? this.requestTimeoutMs
+    });
+    const brokerIdentity = result?._meta?.broker ?? null;
+    if (brokerIdentity !== BROKER_IDENTITY) {
+      const error = createProtocolError(
+        `Expected the ${BROKER_IDENTITY} broker, but connected to ${brokerIdentity ?? "an unidentified service"}.`,
+        { expectedBroker: BROKER_IDENTITY, actualBroker: brokerIdentity }
+      );
+      error.code = BROKER_IDENTITY_ERROR_CODE;
+      throw error;
+    }
+    this.recordInitializeResult(result);
   }
 
   async close() {
@@ -383,7 +398,12 @@ async function initializeClient(client) {
 }
 
 function shouldRetryBrokerDirect(error) {
-  return error?.rpcCode === BROKER_BUSY_RPC_CODE || error?.code === "ENOENT" || error?.code === "ECONNREFUSED";
+  return (
+    error?.rpcCode === BROKER_BUSY_RPC_CODE ||
+    error?.code === "ENOENT" ||
+    error?.code === "ECONNREFUSED" ||
+    error?.code === BROKER_IDENTITY_ERROR_CODE
+  );
 }
 
 export class GrokAcpClient {
@@ -411,6 +431,12 @@ export class GrokAcpClient {
       try {
         return await initializeClient(brokerClient);
       } catch (error) {
+        if (error?.code === BROKER_IDENTITY_ERROR_CODE) {
+          const persistedBroker = loadBrokerSession(cwd);
+          if (persistedBroker?.endpoint === brokerEndpoint) {
+            clearBrokerSession(cwd);
+          }
+        }
         if (options.brokerFallback === false || !shouldRetryBrokerDirect(error)) {
           throw error;
         }

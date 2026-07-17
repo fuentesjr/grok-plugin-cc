@@ -86,6 +86,7 @@ Phase 2 details deliberately un-grilled — grill them when Phase 1 ships.
 ## Build log — plugin surface (2026-07-10)
 
 Files created (all under `plugins/grok/` unless noted):
+
 - `commands/rescue.md`, `commands/review.md`, `commands/status.md`, `commands/cancel.md`, `commands/result.md`, `commands/setup.md`
 - `agents/grok-rescue.md`
 - `skills/grok-cli-runtime/SKILL.md`, `skills/grok-result-handling/SKILL.md`
@@ -96,6 +97,7 @@ Files created (all under `plugins/grok/` unless noted):
 - `tests/commands.test.mjs` (self-contained; `tests/helpers.mjs` did not exist at write time, so no dependency on it)
 
 Deviations from the reference:
+
 - Dropped all `gpt-5-4-prompting`-equivalent skill wiring (`grok-rescue` agent has only `skills: [grok-cli-runtime]`) — that skill is explicitly Phase 2 (`grok-prompting`) per `implementation-notes.md`.
 - `commands/review.md` drops "native reviewer" framing (reference: "Run a Codex review through the shared built-in reviewer") since Grok has no native reviewer — reworded to "Run a Grok Build review through the grok-companion review runtime." Also dropped the reference's pointer to `/codex:adversarial-review` (no such command in Phase 1).
 - `prompts/review.md` adapts the reference `prompts/adversarial-review.md` (the only review-prompt template in the reference) but drops "adversarial" branding/wording per the task brief, since Grok has one review path, not a separate adversarial command — kept the same rigor (skepticism, attack surface, grounding rules) under neutral "software review" framing.
@@ -106,11 +108,13 @@ Deviations from the reference:
 - `tests/commands.test.mjs` is a from-scratch adaptation of the reference test file (which asserts on `adversarial-review.md`/`transfer.md`, absent here) rather than a line-by-line port; it asserts the Phase 1 command set, frontmatter, verbatim-output rules, trust-but-verify/failure-policy language in `grok-result-handling`, and the hooks/schema/LICENSE shape instead.
 
 Verification:
+
 - `node --test tests/commands.test.mjs` — 11 passed, 0 failed.
 - `node --test tests/*.test.mjs` (full suite, includes the parallel worker's lib tests) — 28 passed, 0 failed, no conflicts.
 - `diff` confirmed `schemas/review-output.schema.json`, `LICENSE`, and `NOTICE` are byte-identical to their source-of-truth copies.
 
 Open questions / residual risk:
+
 - `commands/setup.md`'s install-offer step (`curl -fsSL https://x.ai/cli/install.sh | bash`) is unverified against the actual `grok-companion.mjs setup` output shape (that script doesn't exist yet in my scope) — the wording assumes an "unavailable" signal shaped like the reference's; worth a re-check once `scripts/grok-companion.mjs setup` lands.
 - `prompts/review.md` and `prompts/task-brief.md` are static templates; nothing in my scope wires `{{PLACEHOLDER}}` interpolation — that's `scripts/lib/prompts.mjs`'s job (owned elsewhere per the porting map's "Verbatim ports" list).
 
@@ -171,6 +175,7 @@ Open questions / residual risk:
 Posture: faithful port of codex's Phase-2 surface; deviate only where Grok's runtime forces it, each deviation flagged.
 
 ### Stop-review-gate
+
 - Mechanism (faithful): `Stop` hook → `grok-companion task --json <turn-scoped prompt>`; parse first line `ALLOW:`/`BLOCK:`. Reuse codex's turn-scoped `stop-review-gate.md` (rebranded Grok) — reviews the *previous turn's* edits via `last_assistant_message` + repo state, not a diff. Independent of the two diff-scoped review commands.
 - Opt-in, default off (`config.stopReviewGate`); re-add the toggle to `/grok:setup --enable-review-gate|--disable-review-gate` (Phase 1 dropped it) + companion `handleSetup`. Add a `Stop` entry to `hooks/hooks.json`. Keep the running-job note even when the gate is off (faithful).
 - Forced deviation — busy broker: Grok's broker rejects a concurrent request from a different socket with `-32001` (per-connection lock, no queue — `acp-broker.mjs:340`). If a grok job is in flight at Stop, skip the review, ALLOW the stop, surface the running-job note. Only review when the broker is free.
@@ -178,6 +183,7 @@ Posture: faithful port of codex's Phase-2 surface; deviate only where Grok's run
 - Fail mode (faithful): fail-open on not-set-up and busy; fail-closed (`decision: block`) on a genuine review failure (BLOCK verdict / timeout / non-zero exit / empty / invalid). Escape hatch `/grok:setup --disable-review-gate`. Accepted risk: persistent infra failure can stop-loop.
 
 ### Review split (Option A)
+
 - `/grok:review`: re-scoped to a calm defect/correctness review (bug-hunt). Stays focus-less. Behavior change to a signed-off Phase-1 command → re-verify with the planted-bug case.
 - `/grok:adversarial-review`: new command + new companion `adversarial-review` subcommand (reuses review target/collection, accepts focus text → `{{USER_FOCUS}}`). Design-challenge pass.
 - Differentiation lives in the attack surface, not tone: adversarial swaps `attack_surface` → `design_attack_surface` (one-way doors, wrong-layer, symptom-patches, load-bearing assumptions, complexity-without-need, scope). Sharing the defect attack surface would make the split cosmetic (Fable).
@@ -185,6 +191,7 @@ Posture: faithful port of codex's Phase-2 surface; deviate only where Grok's run
 - Known follow-ups (not preemptive): if live runs show design findings contorted into line ranges, add `category: design|defect` to `review-output.schema.json`. Hostile calibration is defensible only because this is a user-invoked advisory second opinion — revisit if it ever gates CI.
 
 ### grok-prompting skill
+
 - Research-first, thin, honestly-attributed: distill only what xAI officially documents (no local guide — `~/.grok/docs` is operational-only; fetch xAI's public prompt guidance during impl); fill gaps with clearly-labeled model-agnostic prompt craft, NOT attributed to xAI; import zero GPT-specific content. Short SKILL.md + ≤1 reference. Wire into the `grok-rescue` agent's `skills` list (Phase 1 left it out).
 
 ## Build log — touched-file capture (2026-07-10)
@@ -217,3 +224,13 @@ Posture: faithful port of codex's Phase-2 surface; deviate only where Grok's run
 - Attribution design honored exactly: Part 1 = xAI-official only, each point linked to its docs.x.ai source (grok-code-prompt-engineering, build/overview, prompt-caching/best-practices) with exact xAI phrasing; Part 2 = general model-agnostic craft explicitly labeled NOT xAI. Zero GPT/codex/OpenAI content (test-enforced). Honest caveat recorded: xAI's prompt guide targets grok-code-fast-1 while Grok Build defaults to grok-4.5 — structural points are model-general, the model-selection point is not.
 - Sources research note: xAI's *general* Generate Text guide (docs.x.ai/docs/guides/chat) carries no prompt-quality best practices — only API mechanics — so the grok-code-fast-1 guide is the real xAI-official prompt source. Forward-risk: if grok-code-fast-1's xAI docs page is ever pulled (some third-party platforms are deprecating that model ~Aug 2026), re-verify Part 1's citations.
 - Verified: added `tests/commands.test.mjs` case asserting honest attribution + xAI sourcing + zero-other-vendor content + agent wiring. doc-reviewer independently corroborated all four cited sources against the live pages — attribution accurate, no corrections. Full suite: `node --test tests/*.test.mjs` — 91 tests, 91 passed, 0 failed, 0 skipped (on host).
+
+## Build log — Grok 0.2.103 / cross-plugin broker isolation (2026-07-17)
+
+- Issue #4 looked like a Grok ACP migration because `session/new` failed with a list of `thread/*` and `turn/*` methods. Live inspection showed those were Codex app-server methods: Grok's state directory contained Codex jobs and its `broker.json` pointed at a live `cxc-*` Codex broker. Grok 0.2.103 still supports ACP `session/*`; isolated direct and default-broker task round-trips both completed.
+- Root cause: both plugins' SessionStart hooks re-exported generic `CLAUDE_PLUGIN_DATA` into Claude Code's shared environment. Hook order could redirect either plugin to the other's data root. Grok now captures its plugin-scoped path as `GROK_COMPANION_DATA_DIR`, and state resolution prefers that stable, namespaced value while retaining `CLAUDE_PLUGIN_DATA` as an out-of-harness fallback.
+- Broker initialization now requires `_meta.broker: "grok-companion"`. A persisted foreign endpoint is removed and the current request falls back to a direct Grok child; the next request can create a clean Grok broker. New broker records carry the same identity marker, and unverified stale records are cleared without trusting their PID or filesystem paths. Shutdown performs the identity handshake before sending `broker/shutdown`, avoiding teardown of another plugin's broker.
+- TDD: added failing regressions for namespaced data precedence, SessionStart exports, persisted Codex-broker rejection/direct fallback, safe foreign-broker shutdown, startup refusing to teardown an unverified stale record, and SessionEnd refusing to teardown an unverified broker record before implementing each runtime change.
+- Verification: full hermetic suite 103/103; `scripts/phase2-live-smoke.sh` against Grok 0.2.103 passed 15/15 with zero inconclusive checks (review, adversarial review, setup toggle, Stop ALLOW/BLOCK, busy skip, gate off).
+- Notable existing debt: the full test run and live-smoke cleanup left some detached generated workers/brokers alive; they were manually terminated. Cleanup ownership is outside issue #4's scope but should be tightened separately.
+- Scope: patch release 0.2.2; no ACP method migration and no Grok version pin. Historical 0.2.93 verification notes remain historical; the fake CLI and release compatibility baseline move to 0.2.103.
