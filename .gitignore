@@ -148,3 +148,4 @@ vite.config.ts.timestamp-*
 
 output/
 plugins/grok/.generated/
+.trk/lock
