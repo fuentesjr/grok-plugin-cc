@@ -29,6 +29,31 @@ function defaultState() {
   };
 }
 
+/**
+ * Ambient CLAUDE_PLUGIN_DATA is shared across plugins in a Claude Code session and
+ * may point at another companion (e.g. codex-openai-codex). Only trust it when the
+ * directory name looks like this plugin's data root; prefer GROK_COMPANION_DATA_DIR.
+ */
+export function isLikelyGrokPluginDataDir(dir) {
+  if (!dir || typeof dir !== "string") {
+    return false;
+  }
+  const base = path.basename(path.resolve(dir));
+  return /^grok(?:[-_.@]|$)/i.test(base);
+}
+
+function resolvePluginDataDir() {
+  const grokDataDir = process.env[GROK_DATA_DIR_ENV];
+  if (grokDataDir) {
+    return grokDataDir;
+  }
+  const claudeDataDir = process.env[CLAUDE_PLUGIN_DATA_ENV];
+  if (claudeDataDir && isLikelyGrokPluginDataDir(claudeDataDir)) {
+    return claudeDataDir;
+  }
+  return null;
+}
+
 export function resolveStateDir(cwd) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   let canonicalWorkspaceRoot = workspaceRoot;
@@ -41,7 +66,7 @@ export function resolveStateDir(cwd) {
   const slugSource = path.basename(workspaceRoot) || "workspace";
   const slug = slugSource.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "workspace";
   const hash = createHash("sha256").update(canonicalWorkspaceRoot).digest("hex").slice(0, 16);
-  const pluginDataDir = process.env[GROK_DATA_DIR_ENV] ?? process.env[CLAUDE_PLUGIN_DATA_ENV];
+  const pluginDataDir = resolvePluginDataDir();
   const stateRoot = pluginDataDir ? path.join(pluginDataDir, "state") : FALLBACK_STATE_ROOT_DIR;
   return path.join(stateRoot, `${slug}-${hash}`);
 }

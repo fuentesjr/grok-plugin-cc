@@ -22,7 +22,13 @@ import {
   teardownBrokerSession
 } from "../plugins/grok/scripts/lib/broker-lifecycle.mjs";
 import { terminateProcessTree } from "../plugins/grok/scripts/lib/process.mjs";
-import { loadState, resolveJobFile, setConfig, upsertJob } from "../plugins/grok/scripts/lib/state.mjs";
+import {
+  loadState,
+  resolveJobFile,
+  resolveStateFile,
+  setConfig,
+  upsertJob
+} from "../plugins/grok/scripts/lib/state.mjs";
 import { buildEnv, installFakeGrok, readFakeGrokState } from "./fake-grok-fixture.mjs";
 import { initGitRepo, makeTempDir, run, writeExecutable } from "./helpers.mjs";
 
@@ -285,6 +291,72 @@ test("background task completes through status --wait and result", async (t) => 
   const result = jsonOutput(runCompanion(["result", launch.jobId, "--json", "-C", cwd], { cwd, env }));
   assert.equal(result.storedJob.result.rawOutput, "Task completed.");
   assert.equal(fs.existsSync(result.job.logFile), true);
+});
+
+test("status --json reports the state file it consulted", () => {
+  const { cwd, env } = setupFake("task-ok");
+  const report = jsonOutput(runCompanion(["status", "--json", "-C", cwd], { cwd, env }));
+  assert.equal(report.stateFile, resolveStateFile(cwd));
+  assert.match(report.stateFile, /state\.json$/);
+});
+
+test("status text includes the state file path", () => {
+  const { cwd, env } = setupFake("task-ok");
+  const result = runCompanion(["status", "-C", cwd], { cwd, env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /State file:/);
+  assert.match(result.stdout, /state\.json/);
+});
+
+test("cancel for an unknown job names the state file it consulted", () => {
+  const { cwd, env } = setupFake("task-ok");
+  const result = runCompanion(["cancel", "task-does-not-exist", "--json", "-C", cwd], { cwd, env });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /State file:/);
+  assert.match(result.stderr, new RegExp(resolveStateFile(cwd).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("resume-last reaps a stuck running job whose worker pid is dead", async (t) => {
+  const { cwd, env } = setupFake("task-ok");
+  t.after(() => cleanupBroker(cwd));
+
+  // Prior completed task leaves a resumable thread; a dead "running" record must not block it.
+  const prior = jsonOutput(
+    runCompanion(["task", "--json", "-C", cwd, "Prior", "completed", "task"], { cwd, env })
+  );
+  assert.equal(prior.status, 0);
+  assert.ok(prior.jobId);
+  assert.ok(prior.threadId);
+
+  upsertJob(cwd, {
+    id: "task-dead-worker",
+    jobClass: "task",
+    kind: "task",
+    status: "running",
+    phase: "running",
+    pid: 2_147_483_646,
+    threadId: "thread-dead",
+    title: "Dead worker",
+    summary: "stuck",
+    sessionId: null,
+    updatedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString()
+  });
+
+  const blocked = runCompanion(["task", "--resume-last", "--json", "-C", cwd], { cwd, env });
+  // Without the fix this fails with "still running"; with the fix it reaps and resumes.
+  assert.equal(blocked.status, 0, blocked.stderr);
+  assert.doesNotMatch(blocked.stderr, /still running/i);
+  const payload = parseJson(blocked.stdout);
+  assert.equal(payload.status, 0);
+  assert.notEqual(payload.jobId, "task-dead-worker");
+  // Resume should continue the prior completed thread, not the dead-worker record.
+  assert.equal(payload.threadId, prior.threadId);
+
+  const dead = loadState(cwd).jobs.find((job) => job.id === "task-dead-worker");
+  assert.ok(dead);
+  assert.equal(dead.status, "failed");
+  assert.match(String(dead.errorMessage ?? ""), /no longer running/i);
 });
 
 test("cancel stops a hanging background task and preserves its log", async (t) => {

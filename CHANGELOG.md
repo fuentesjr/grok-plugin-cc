@@ -10,6 +10,29 @@ Claude Code's `/plugin update` silently no-ops on the stale snapshot.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-07-19
+
+Job registry isolation and stuck-job recovery (#5).
+
+### Fixed
+
+- `#5` Ambient `CLAUDE_PLUGIN_DATA` is no longer trusted for the job registry unless
+  the directory name looks like a Grok plugin data root (e.g. `grok-…`). Prefer
+  `GROK_COMPANION_DATA_DIR` always; otherwise fall back to the temp state root.
+  This stops session-shell `status`/`cancel` from reading the Codex companion's
+  registry when both plugins are installed.
+- `#5` Queued/running jobs whose worker pid is dead (or null-pid past the age
+  cutoff) are reaped to `failed` before status, cancel, and `task --resume-last`,
+  so a crashed worker no longer permanently blocks resume.
+- `#5` `status` (text + JSON) and cancel/"still running" errors report the
+  `state.json` path they consulted, so the next wrong-registry case is one step
+  to diagnose.
+
+### Changed
+
+- Shared `processIsAlive` / `isJobInFlight` / `reapDeadJobs` helpers; the Stop
+  review gate reuses the same liveness rules.
+
 ## [0.2.2] - 2026-07-17
 
 Compatibility and isolation fix for Grok CLI 0.2.103 when the Grok and Codex plugins

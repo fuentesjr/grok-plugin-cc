@@ -336,6 +336,7 @@ export function renderStatusReport(report) {
     "# Grok Status",
     "",
     `Session runtime: ${report.sessionRuntime.label}`,
+    ...(report.stateFile ? [`State file: ${report.stateFile}`] : []),
     ""
   ];
 

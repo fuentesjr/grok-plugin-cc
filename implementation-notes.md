@@ -234,3 +234,12 @@ Posture: faithful port of codex's Phase-2 surface; deviate only where Grok's run
 - Verification: full hermetic suite 103/103; `scripts/phase2-live-smoke.sh` against Grok 0.2.103 passed 15/15 with zero inconclusive checks (review, adversarial review, setup toggle, Stop ALLOW/BLOCK, busy skip, gate off).
 - Notable existing debt: the full test run and live-smoke cleanup left some detached generated workers/brokers alive; they were manually terminated. Cleanup ownership is outside issue #4's scope but should be tightened separately.
 - Scope: patch release 0.2.2; no ACP method migration and no Grok version pin. Historical 0.2.93 verification notes remain historical; the fake CLI and release compatibility baseline move to 0.2.103.
+
+## Build log — issue #5 job registry + dead-worker reaping (2026-07-19)
+
+- Root cause (a): session-shell `status`/`cancel` trusted ambient `CLAUDE_PLUGIN_DATA`, which another plugin's SessionStart can set (e.g. `codex-openai-codex`). Grok-rescue jobs write under `GROK_COMPANION_DATA_DIR` / grok data; shell commands then miss those jobs.
+- Fix (a): `resolvePluginDataDir` prefers `GROK_COMPANION_DATA_DIR`; only accepts ambient `CLAUDE_PLUGIN_DATA` when `isLikelyGrokPluginDataDir` (basename `^grok(?:[-_.@]|$)`); else temp fallback.
+- Root cause (b): `resolveLatestTrackedTaskThread` treated any `queued`/`running` as live with no pid check → dead workers blocked `--resume-last` forever; wrong registry made cancel useless.
+- Fix (b): shared `processIsAlive` + `isJobInFlight` + `reapDeadJobs` (mark failed, clear pids); called from status/cancel/resume-last. Stop gate imports the same in-flight helper.
+- Fix (c): status snapshot/text include `stateFile`; cancel and still-running errors append `State file: …`.
+- Verification: `node --test tests/*.test.mjs` (full suite). Version 0.2.3.

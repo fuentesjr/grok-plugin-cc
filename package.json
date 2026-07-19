@@ -1,6 +1,6 @@
 {
   "name": "grok-plugin-cc",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "description": "Grok plugin to use in Claude Code for delegation and code review.",

@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { getGrokAvailability } from "./lib/grok.mjs";
-import { sortJobsNewestFirst } from "./lib/job-control.mjs";
+import { isJobInFlight as jobLooksInFlight, sortJobsNewestFirst } from "./lib/job-control.mjs";
 import { interpolateTemplate, loadPromptTemplate } from "./lib/prompts.mjs";
 import { getConfig, listJobs } from "./lib/state.mjs";
 import { SESSION_ID_ENV } from "./lib/tracked-jobs.mjs";
@@ -15,7 +15,6 @@ import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 
 const STOP_REVIEW_BUDGET_MS = 480_000;
 const DEFAULT_STOP_REVIEW_TIMEOUT_MS = 600_000;
-const STALE_RUNNING_JOB_AGE_MS = 12 * 60 * 1000;
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(SCRIPT_DIR, "..");
 
@@ -52,46 +51,12 @@ function buildSetupNote(cwd) {
   return `Grok Build is not set up for the review gate.${detail} Run /grok:setup.`;
 }
 
-function processIsAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return null;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === "EPERM";
-  }
-}
-
-function jobTimestamp(job) {
-  for (const value of [job.updatedAt, job.startedAt, job.createdAt]) {
-    const timestamp = Date.parse(value ?? "");
-    if (Number.isFinite(timestamp)) {
-      return timestamp;
-    }
-  }
-  return null;
-}
-
 function isJobInFlight(job, now = Date.now()) {
+  // Stop-review jobs never block the gate (they are the gate).
   if (job.jobClass === "stop-review") {
     return false;
   }
-  if (job.status !== "queued" && job.status !== "running") {
-    return false;
-  }
-  // `job.pid` tracks the worker process for both queued and running jobs. A dead
-  // worker must not count as in-flight, or a crashed job would disable the gate for
-  // the rest of the session. When liveness is unknowable (no usable pid), fall back
-  // to an age cutoff, and treat an unknown age as not-in-flight so the safe default
-  // is to run the review rather than silently skip it.
-  const alive = processIsAlive(job.pid);
-  if (alive !== null) {
-    return alive;
-  }
-  const timestamp = jobTimestamp(job);
-  return timestamp != null && now - timestamp <= STALE_RUNNING_JOB_AGE_MS;
+  return jobLooksInFlight(job, now);
 }
 
 function describeRunningJobs(jobs, input = {}) {

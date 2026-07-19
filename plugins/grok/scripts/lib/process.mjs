@@ -1,6 +1,23 @@
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
+/**
+ * Probe whether a process is still alive.
+ * @returns {true|false|null} true/false when known; null when pid is unusable.
+ */
+export function processIsAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return null;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the process exists but we cannot signal it.
+    return error?.code === "EPERM";
+  }
+}
+
 export function runCommand(command, args = [], options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd,

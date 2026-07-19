@@ -63,6 +63,38 @@ test("resolveStateDir prefers Grok-specific plugin data over shared CLAUDE_PLUGI
   }
 });
 
+test("resolveStateDir ignores foreign ambient CLAUDE_PLUGIN_DATA (e.g. codex)", () => {
+  const workspace = makeTempDir();
+  // Mimic Claude Code's shared env after the Codex companion SessionStart hook:
+  // basename is not a Grok plugin data root.
+  const codexPluginDataDir = makeTempDir("codex-openai-codex-");
+  process.env.CLAUDE_PLUGIN_DATA = codexPluginDataDir;
+  delete process.env.GROK_COMPANION_DATA_DIR;
+
+  try {
+    const stateDir = resolveStateDir(workspace);
+
+    assert.equal(stateDir.startsWith(path.join(codexPluginDataDir, "state")), false);
+    assert.equal(stateDir.startsWith(os.tmpdir()), true);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
+test("resolveStateDir accepts CLAUDE_PLUGIN_DATA only when it looks like a Grok data root", () => {
+  const workspace = makeTempDir();
+  const grokPluginDataDir = makeTempDir("grok-grok-");
+  process.env.CLAUDE_PLUGIN_DATA = grokPluginDataDir;
+  delete process.env.GROK_COMPANION_DATA_DIR;
+
+  try {
+    const stateDir = resolveStateDir(workspace);
+    assert.equal(stateDir.startsWith(path.join(grokPluginDataDir, "state")), true);
+  } finally {
+    delete process.env.CLAUDE_PLUGIN_DATA;
+  }
+});
+
 test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", () => {
   const workspace = makeTempDir();
   const stateFile = resolveStateFile(workspace);

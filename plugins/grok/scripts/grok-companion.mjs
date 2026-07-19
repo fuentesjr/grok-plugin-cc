@@ -31,6 +31,7 @@ import { BROKER_BUSY_RPC_CODE } from "./lib/acp-client.mjs";
 import {
   buildSingleJobSnapshot,
   buildStatusSnapshot,
+  reapDeadJobs,
   readStoredJob,
   resolveCancelableJob,
   resolveResultJob,
@@ -48,7 +49,15 @@ import {
   renderStoredJobResult,
   renderTaskResult
 } from "./lib/render.mjs";
-import { generateJobId, getConfig, listJobs, setConfig, upsertJob, writeJobFile } from "./lib/state.mjs";
+import {
+  generateJobId,
+  getConfig,
+  listJobs,
+  resolveStateFile,
+  setConfig,
+  upsertJob,
+  writeJobFile
+} from "./lib/state.mjs";
 import {
   appendLogLine,
   createJobLogFile,
@@ -276,12 +285,15 @@ function findLatestResumableTaskJob(jobs, excludeJobId = null) {
 }
 
 async function resolveLatestTrackedTaskThread(cwd, options = {}) {
+  reapDeadJobs(cwd);
   const jobs = filterJobsForCurrentClaudeSession(sortJobsNewestFirst(listJobs(cwd)));
   const active = jobs.find(
     (job) => job.id !== options.excludeJobId && job.jobClass === "task" && ["queued", "running"].includes(job.status)
   );
   if (active) {
-    throw new Error(`Task ${active.id} is still running. Use /grok:status before continuing it.`);
+    throw new Error(
+      `Task ${active.id} is still running. Use /grok:status before continuing it. State file: ${resolveStateFile(cwd)}`
+    );
   }
   const tracked = findLatestResumableTaskJob(jobs, options.excludeJobId);
   if (tracked) {

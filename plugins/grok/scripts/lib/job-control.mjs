@@ -5,7 +5,16 @@ import {
   DEFAULT_JOB_BUDGET_MS,
   getSessionRuntimeStatus
 } from "./grok.mjs";
-import { getConfig, listJobs, readJobFile, resolveJobFile } from "./state.mjs";
+import { processIsAlive } from "./process.mjs";
+import {
+  getConfig,
+  listJobs,
+  loadState,
+  readJobFile,
+  resolveJobFile,
+  resolveStateFile,
+  saveState
+} from "./state.mjs";
 import { SESSION_ID_ENV } from "./tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
@@ -15,9 +24,84 @@ export const DEFAULT_MAX_PROGRESS_LINES = 4;
 export const MIN_STATUS_WAIT_TIMEOUT_MS = 5_000;
 /** Exit code for `status --wait` when the wait gave up while the job is still active. */
 export const STATUS_WAIT_TIMEOUT_EXIT_CODE = 2;
+/** Age cutoff when a running/queued job has no usable pid (shared with the Stop gate). */
+export const STALE_RUNNING_JOB_AGE_MS = 12 * 60 * 1000;
+const DEAD_WORKER_MESSAGE = "Worker process is no longer running.";
 
 export function sortJobsNewestFirst(jobs) {
   return [...jobs].sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
+}
+
+function jobTimestampMs(job) {
+  for (const value of [job.updatedAt, job.startedAt, job.createdAt]) {
+    const timestamp = Date.parse(value ?? "");
+    if (Number.isFinite(timestamp)) {
+      return timestamp;
+    }
+  }
+  return null;
+}
+
+/**
+ * Whether a queued/running job should still be treated as in-flight.
+ * Dead workers (or stale null-pid records) are not in-flight.
+ */
+export function isJobInFlight(job, now = Date.now()) {
+  if (job.status !== "queued" && job.status !== "running") {
+    return false;
+  }
+  const alive = processIsAlive(job.pid);
+  if (alive !== null) {
+    return alive;
+  }
+  const timestamp = jobTimestampMs(job);
+  return timestamp != null && now - timestamp <= STALE_RUNNING_JOB_AGE_MS;
+}
+
+function markJobWorkerDead(job, completedAt) {
+  return {
+    ...job,
+    status: "failed",
+    phase: "failed",
+    pid: null,
+    childPid: null,
+    completedAt,
+    errorMessage: DEAD_WORKER_MESSAGE
+  };
+}
+
+/**
+ * Persist failed status for queued/running jobs whose worker is gone so
+ * resume-last / status / cancel no longer treat them as live.
+ */
+export function reapDeadJobs(cwd, options = {}) {
+  const workspaceRoot = resolveWorkspaceRoot(cwd);
+  const now = options.now ?? Date.now();
+  const state = loadState(workspaceRoot);
+  const completedAt = new Date(now).toISOString();
+  let changed = false;
+  const nextJobs = state.jobs.map((job) => {
+    if ((job.status === "queued" || job.status === "running") && !isJobInFlight(job, now)) {
+      changed = true;
+      const reaped = markJobWorkerDead(job, completedAt);
+      try {
+        const jobFile = resolveJobFile(workspaceRoot, job.id);
+        if (fs.existsSync(jobFile)) {
+          const existing = readJobFile(jobFile) ?? {};
+          fs.writeFileSync(jobFile, `${JSON.stringify({ ...existing, ...reaped }, null, 2)}\n`, "utf8");
+        }
+      } catch {
+        // Index update below remains authoritative if the per-job file is missing.
+      }
+      return reaped;
+    }
+    return job;
+  });
+  if (!changed) {
+    return state.jobs;
+  }
+  saveState(workspaceRoot, { ...state, jobs: nextJobs });
+  return nextJobs;
 }
 
 function getCurrentSessionId(options = {}) {
@@ -234,9 +318,15 @@ function matchJobReference(jobs, reference, predicate = () => true) {
   throw new Error(`No job found for "${reference}". Run /grok:status to list known jobs.`);
 }
 
+function withStateFileHint(message, workspaceRoot) {
+  return `${message} State file: ${resolveStateFile(workspaceRoot)}`;
+}
+
 export function buildStatusSnapshot(cwd, options = {}) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  reapDeadJobs(workspaceRoot);
   const config = getConfig(workspaceRoot);
+  const stateFile = resolveStateFile(workspaceRoot);
   const jobs = sortJobsNewestFirst(filterJobsForCurrentSession(listJobs(workspaceRoot), options));
   const maxJobs = options.maxJobs ?? DEFAULT_MAX_STATUS_JOBS;
   const maxProgressLines = options.maxProgressLines ?? DEFAULT_MAX_PROGRESS_LINES;
@@ -254,6 +344,7 @@ export function buildStatusSnapshot(cwd, options = {}) {
 
   return {
     workspaceRoot,
+    stateFile,
     config,
     sessionRuntime: getSessionRuntimeStatus(options.env, workspaceRoot),
     running,
@@ -265,14 +356,23 @@ export function buildStatusSnapshot(cwd, options = {}) {
 
 export function buildSingleJobSnapshot(cwd, reference, options = {}) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  reapDeadJobs(workspaceRoot);
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
-  const selected = matchJobReference(jobs, reference);
+  let selected;
+  try {
+    selected = matchJobReference(jobs, reference);
+  } catch (error) {
+    throw new Error(withStateFileHint(error.message, workspaceRoot));
+  }
   if (!selected) {
-    throw new Error(`No job found for "${reference}". Run /grok:status to inspect known jobs.`);
+    throw new Error(
+      withStateFileHint(`No job found for "${reference}". Run /grok:status to inspect known jobs.`, workspaceRoot)
+    );
   }
 
   return {
     workspaceRoot,
+    stateFile: resolveStateFile(workspaceRoot),
     job: enrichJob(selected, { maxProgressLines: options.maxProgressLines })
   };
 }
@@ -369,15 +469,20 @@ export function resolveResultJob(cwd, reference) {
 
 export function resolveCancelableJob(cwd, reference, options = {}) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  reapDeadJobs(workspaceRoot);
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot));
   const activeJobs = jobs.filter((job) => job.status === "queued" || job.status === "running");
 
   if (reference) {
-    const selected = matchJobReference(activeJobs, reference);
-    if (!selected) {
-      throw new Error(`No active job found for "${reference}".`);
+    try {
+      const selected = matchJobReference(activeJobs, reference);
+      if (!selected) {
+        throw new Error(`No active job found for "${reference}".`);
+      }
+      return { workspaceRoot, job: selected };
+    } catch (error) {
+      throw new Error(withStateFileHint(error.message, workspaceRoot));
     }
-    return { workspaceRoot, job: selected };
   }
 
   const sessionScopedActiveJobs = filterJobsForCurrentSession(activeJobs, options);
@@ -386,12 +491,16 @@ export function resolveCancelableJob(cwd, reference, options = {}) {
     return { workspaceRoot, job: sessionScopedActiveJobs[0] };
   }
   if (sessionScopedActiveJobs.length > 1) {
-    throw new Error("Multiple Grok jobs are active. Pass a job id to /grok:cancel.");
+    throw new Error(
+      withStateFileHint("Multiple Grok jobs are active. Pass a job id to /grok:cancel.", workspaceRoot)
+    );
   }
 
   if (getCurrentSessionId(options)) {
-    throw new Error("No active Grok jobs to cancel for this session.");
+    throw new Error(
+      withStateFileHint("No active Grok jobs to cancel for this session.", workspaceRoot)
+    );
   }
 
-  throw new Error("No active Grok jobs to cancel.");
+  throw new Error(withStateFileHint("No active Grok jobs to cancel.", workspaceRoot));
 }
