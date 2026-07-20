@@ -121,6 +121,35 @@ function appendActiveJobsTable(lines, jobs) {
   }
 }
 
+function formatForensicsDetails(forensics) {
+  if (!forensics || typeof forensics !== "object") {
+    return [];
+  }
+  const lines = [];
+  if (forensics.deathKind) {
+    lines.push(`  Forensics: ${forensics.deathKind}`);
+  }
+  if (forensics.signal) {
+    lines.push(`  Signal: ${forensics.signal}`);
+  }
+  if (forensics.lastProgressAt) {
+    lines.push(`  Last progress: ${forensics.lastProgressAt}`);
+  }
+  if (forensics.partialFinalMessageChars != null) {
+    lines.push(`  Partial assistant message: ${forensics.partialFinalMessageChars} chars captured`);
+  }
+  if (forensics.dumpFile) {
+    lines.push(`  Dump: ${forensics.dumpFile}`);
+  }
+  if (forensics.runtime?.dispatch) {
+    lines.push(`  Dispatch: ${forensics.runtime.dispatch}`);
+  }
+  if (Array.isArray(forensics.hints) && forensics.hints.length > 0) {
+    lines.push(`  Hints: ${forensics.hints.join("; ")}`);
+  }
+  return lines;
+}
+
 function pushJobDetails(lines, job, options = {}) {
   lines.push(`- ${formatJobLine(job)}`);
   if (job.summary) {
@@ -153,6 +182,9 @@ function pushJobDetails(lines, job, options = {}) {
   }
   if (job.status !== "queued" && job.status !== "running" && job.jobClass === "task" && job.write && options.showReviewHint) {
     lines.push("  Review changes: /grok:review --wait");
+  }
+  if (options.showForensics !== false) {
+    lines.push(...formatForensicsDetails(job.forensics));
   }
   if (job.progressPreview?.length) {
     lines.push("  Progress:");
@@ -444,6 +476,24 @@ export function renderStoredJobResult(job, storedJob) {
     lines.push("", storedJob.errorMessage);
   } else {
     lines.push("", "No captured result payload was stored for this job.");
+  }
+
+  const forensics = storedJob?.forensics ?? job.forensics;
+  const forensicsLines = formatForensicsDetails(forensics);
+  if (forensicsLines.length > 0) {
+    lines.push("", "Forensics:");
+    for (const line of forensicsLines) {
+      lines.push(line.replace(/^\s+/, "  "));
+    }
+  }
+
+  const partial = forensics?.partialFinalMessage;
+  if (typeof partial === "string" && partial.trim()) {
+    lines.push("", "Last partial assistant message:", "", "```text", partial.trimEnd(), "```");
+  }
+
+  if (job.logFile || storedJob?.logFile) {
+    lines.push("", `Log: ${job.logFile ?? storedJob.logFile}`);
   }
 
   return `${lines.join("\n").trimEnd()}\n`;

@@ -58,6 +58,7 @@ import {
   upsertJob,
   writeJobFile
 } from "./lib/state.mjs";
+import { buildRuntimeIdentity, mergeForensics, recoveryHintsForJob } from "./lib/forensics.mjs";
 import {
   appendLogLine,
   createJobLogFile,
@@ -74,6 +75,21 @@ const ROOT_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const DEFAULT_STATUS_POLL_INTERVAL_MS = 2_000;
 const FAST_MODEL_ALIAS = "grok-composer-2.5-fast";
 
+function readPluginVersion() {
+  try {
+    const pluginJson = path.join(ROOT_DIR, ".claude-plugin", "plugin.json");
+    const parsed = JSON.parse(fs.readFileSync(pluginJson, "utf8"));
+    return typeof parsed.version === "string" ? parsed.version : null;
+  } catch {
+    return null;
+  }
+}
+
+function renderTrackedJobBanner(jobId) {
+  const hints = recoveryHintsForJob(jobId);
+  return [`Tracked job ${jobId} started.`, ...hints].join(" ") + "\n";
+}
+
 function printUsage() {
   console.log(
     [
@@ -87,6 +103,12 @@ function printUsage() {
       "  node scripts/grok-companion.mjs cancel [-C <path>] [job-id] [--json]",
       "",
       "Notes:",
+      "  task (default)     Always a tracked job: detached worker + wait for result.",
+      "                    Prints the job id first so interrupted runs stay recoverable",
+      "                    via status/result even if the waiting parent is killed.",
+      "  --background      Fire-and-forget tracked job (no wait). Write jobs require a",
+      "                    clean working tree.",
+      "  --wait             Same as default for task (detach + wait).",
       "  --budget-ms <ms>   Wall-clock job budget (default 1200000 = 20 minutes).",
       "                    Also overridable via GROK_COMPANION_BUDGET_MS.",
       "                    On expiry the turn is cancelled, then a short wind-down",
@@ -94,7 +116,9 @@ function printUsage() {
       "  --timeout-ms <ms> For status --wait only. By default waits until the job's",
       `                    budget deadline (budget + ${DEFAULT_BUDGET_GRACE_MS}ms grace from job start).`,
       `                    Wait timeout exits ${STATUS_WAIT_TIMEOUT_EXIT_CODE} with the job still active;`,
-      "                    that is not a job failure."
+      "                    that is not a job failure.",
+      "  Forensics          Failed/interrupted jobs keep log + jobs/<id>.dump.json with",
+      "                    last progress, death kind, and partial assistant text when known."
     ].join("\n")
   );
 }
@@ -335,7 +359,16 @@ async function runForegroundCommand(job, runner, options = {}) {
     logFile: options.logFile,
     stderr: !options.json
   });
-  const execution = await runTrackedJob(job, () => runner(progress), { logFile });
+  if (!options.json && options.announceJob !== false) {
+    process.stdout.write(renderTrackedJobBanner(job.id));
+  } else if (options.json) {
+    process.stderr.write(renderTrackedJobBanner(job.id));
+  }
+  const execution = await runTrackedJob(job, () => runner(progress), {
+    logFile,
+    dispatch: options.dispatch ?? "foreground",
+    pluginVersion: readPluginVersion()
+  });
   outputResult(options.json ? execution.payload : execution.rendered, options.json);
   if (execution.exitStatus !== 0) {
     process.exitCode = execution.exitStatus;
@@ -628,23 +661,39 @@ function spawnDetachedTaskWorker(cwd, jobId) {
   return child;
 }
 
-function enqueueBackgroundTask(cwd, job, request) {
+function enqueueBackgroundTask(cwd, job, request, options = {}) {
+  const dispatch = options.dispatch ?? "background";
+  const pluginVersion = readPluginVersion();
   const { logFile } = createTrackedProgress(job);
-  appendLogLine(logFile, "Queued for background execution.");
+  appendLogLine(logFile, `Queued for ${dispatch} execution (tracked job).`);
+  appendLogLine(logFile, recoveryHintsForJob(job.id).join(" "));
+  const forensics = mergeForensics(job.forensics, {
+    runtime: buildRuntimeIdentity({ dispatch, pluginVersion }),
+    lastProgressAt: nowIso(),
+    lastPhase: "queued"
+  });
   const queuedRecord = {
     ...job,
     status: "queued",
     phase: "queued",
     pid: null,
     logFile,
-    request
+    request,
+    forensics
   };
   writeJobFile(job.workspaceRoot, job.id, queuedRecord);
   upsertJob(job.workspaceRoot, queuedRecord);
   const child = spawnDetachedTaskWorker(cwd, job.id);
   const launchedRecord = {
     ...queuedRecord,
-    pid: child.pid ?? null
+    pid: child.pid ?? null,
+    forensics: mergeForensics(forensics, {
+      runtime: buildRuntimeIdentity({
+        dispatch,
+        pluginVersion,
+        pid: child.pid ?? process.pid
+      })
+    })
   };
   writeJobFile(job.workspaceRoot, job.id, launchedRecord);
   upsertJob(job.workspaceRoot, launchedRecord);
@@ -653,12 +702,53 @@ function enqueueBackgroundTask(cwd, job, request) {
     status: "queued",
     title: job.title,
     summary: job.summary,
-    logFile
+    logFile,
+    forensics: launchedRecord.forensics
   };
 }
 
 function renderQueuedTaskLaunch(payload) {
-  return `${payload.title} started in the background as ${payload.jobId}. Check /grok:status ${payload.jobId} for progress.\n`;
+  const hints = recoveryHintsForJob(payload.jobId).join(" ");
+  return `${payload.title} started in the background as ${payload.jobId} (tracked). ${hints}\n`;
+}
+
+async function waitForTaskResult(cwd, jobId, options = {}) {
+  const { snapshot, waitTimedOut, waitTimeoutMs } = await waitForSingleJobSnapshot(cwd, jobId, {
+    timeoutMs: options.timeoutMs,
+    pollIntervalMs: options.pollIntervalMs
+  });
+  if (waitTimedOut) {
+    return { waitTimedOut: true, waitTimeoutMs, snapshot, storedJob: null };
+  }
+  const storedJob = readStoredJob(snapshot.workspaceRoot, snapshot.job.id);
+  return { waitTimedOut: false, waitTimeoutMs, snapshot, storedJob };
+}
+
+function outputFinishedTask(snapshot, storedJob, options = {}) {
+  const job = snapshot.job;
+  const payload = storedJob?.result ?? {
+    jobId: job.id,
+    status: job.status === "completed" ? 0 : 1,
+    rawOutput: "",
+    threadId: job.threadId ?? storedJob?.threadId ?? null
+  };
+  if (options.json) {
+    outputResult(
+      {
+        ...payload,
+        jobId: job.id,
+        jobStatus: job.status,
+        forensics: storedJob?.forensics ?? job.forensics ?? null,
+        logFile: job.logFile ?? storedJob?.logFile ?? null
+      },
+      true
+    );
+  } else {
+    process.stdout.write(renderStoredJobResult(job, storedJob));
+  }
+  if (job.status !== "completed") {
+    process.exitCode = typeof payload.status === "number" && payload.status !== 0 ? payload.status : 1;
+  }
 }
 
 function assertBackgroundWriteAllowed(workspaceRoot) {
@@ -705,24 +795,43 @@ async function handleTask(argv) {
     jobId: job.id
   };
 
+  ensureGrokAvailable(cwd);
+  if (!prompt && !resumeLast) {
+    throw new Error("Provide a prompt, a prompt file, piped stdin, or use --resume-last.");
+  }
+
+  // Fire-and-forget: true --background without --wait.
   if (options.background && !options.wait) {
-    ensureGrokAvailable(cwd);
-    if (!prompt && !resumeLast) {
-      throw new Error("Provide a prompt, a prompt file, piped stdin, or use --resume-last.");
-    }
     if (write) {
       assertBackgroundWriteAllowed(workspaceRoot);
     }
-    const payload = enqueueBackgroundTask(cwd, job, request);
+    const payload = enqueueBackgroundTask(cwd, job, request, { dispatch: "background" });
     outputCommandResult(payload, renderQueuedTaskLaunch(payload), options.json);
     return;
   }
 
-  await runForegroundCommand(
-    job,
-    (progress) => executeTaskRun({ ...request, onProgress: progress }),
-    { json: options.json }
-  );
+  // Default / --wait: detached tracked worker + wait for completion.
+  // The worker survives if this waiting parent is killed (e.g. Claude Bash 60s).
+  const payload = enqueueBackgroundTask(cwd, job, request, { dispatch: "detach-wait" });
+  if (options.json) {
+    process.stderr.write(renderTrackedJobBanner(payload.jobId));
+  } else {
+    process.stdout.write(renderTrackedJobBanner(payload.jobId));
+  }
+
+  const finished = await waitForTaskResult(cwd, payload.jobId, {
+    timeoutMs: options["timeout-ms"] ?? null
+  });
+  if (finished.waitTimedOut) {
+    outputWaitTimeout(finished.snapshot, finished.waitTimeoutMs, options.json);
+    if (!options.json) {
+      process.stderr.write(
+        `Job ${payload.jobId} is still tracked — ${recoveryHintsForJob(payload.jobId).join(" ")}\n`
+      );
+    }
+    return;
+  }
+  outputFinishedTask(finished.snapshot, finished.storedJob, { json: options.json });
 }
 
 async function handleTaskWorker(argv) {
@@ -748,7 +857,11 @@ async function handleTaskWorker(argv) {
   await runTrackedJob(
     { ...storedJob, workspaceRoot, logFile },
     () => executeTaskRun({ ...storedJob.request, onProgress: progress }),
-    { logFile }
+    {
+      logFile,
+      dispatch: storedJob.forensics?.runtime?.dispatch ?? "background-worker",
+      pluginVersion: readPluginVersion()
+    }
   );
 }
 

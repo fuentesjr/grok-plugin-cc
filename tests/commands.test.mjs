@@ -91,6 +91,12 @@ test("rescue command routes through the grok-rescue subagent and absorbs continu
   assert.doesNotMatch(rescue, /spark/i);
   assert.doesNotMatch(rescue, /codex/i);
 
+  assert.match(rescue, /Tracked jobs/i);
+  assert.match(rescue, /job registry/i);
+  assert.match(rescue, /\/grok:status/);
+  assert.match(rescue, /\/grok:result/);
+  assert.match(rescue, /dump\.json/i);
+
   assert.match(agent, /name:\s*grok-rescue/);
   assert.match(agent, /model:\s*sonnet/);
   assert.match(agent, /tools:\s*Bash/);
@@ -98,8 +104,9 @@ test("rescue command routes through the grok-rescue subagent and absorbs continu
   assert.match(agent, /--resume/);
   assert.match(agent, /--fresh/);
   assert.match(agent, /thin forwarding wrapper/i);
-  assert.match(agent, /prefer foreground for a small, clearly bounded rescue request/i);
-  assert.match(agent, /If the user did not explicitly choose `--background` or `--wait` and the task looks complicated, open-ended, multi-step, or likely to keep Grok Build running for a long time, prefer background execution/i);
+  assert.match(agent, /Tracked jobs \(always on\)/i);
+  assert.match(agent, /tracked job/i);
+  assert.match(agent, /Do not pass companion `--background`/i);
   assert.match(agent, /Use exactly one `Bash` call/i);
   assert.match(agent, /Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own/i);
   assert.match(agent, /Do not call `review`, `status`, `result`, or `cancel`/i);
@@ -107,12 +114,16 @@ test("rescue command routes through the grok-rescue subagent and absorbs continu
   assert.match(agent, /Leave model unset by default/i);
   assert.match(agent, /If the user asks for `fast`, map that to `--model grok-composer-2\.5-fast`/i);
   assert.match(agent, /Return the stdout of the `grok-companion` command exactly as-is/i);
+  assert.match(agent, /tracked-job banner/i);
   assert.match(agent, /If the Bash call fails or Grok cannot be invoked, return nothing/i);
   assert.doesNotMatch(agent, /spark/i);
   assert.doesNotMatch(agent, /gpt-5-4-prompting/i);
   assert.doesNotMatch(agent, /codex/i);
 
   assert.match(runtimeSkill, /user-invocable:\s*false/);
+  assert.match(runtimeSkill, /Tracked jobs \(read this first\)/i);
+  assert.match(runtimeSkill, /Every `task` run is a tracked companion job/i);
+  assert.match(runtimeSkill, /jobs\/<id>\.dump\.json/i);
   assert.match(runtimeSkill, /only job is to invoke `task` once and return that stdout unchanged/i);
   assert.match(runtimeSkill, /Do not call `setup`, `review`, `status`, `result`, or `cancel`/i);
   assert.match(runtimeSkill, /Leave `--effort` unset unless the user explicitly requests a specific effort/i);
@@ -120,6 +131,7 @@ test("rescue command routes through the grok-rescue subagent and absorbs continu
   assert.match(runtimeSkill, /Map `fast` to `--model grok-composer-2\.5-fast`/i);
   assert.match(runtimeSkill, /If the forwarded request includes `--background` or `--wait`, treat that as Claude-side execution control only/i);
   assert.match(runtimeSkill, /Strip it before calling `task`/i);
+  assert.match(runtimeSkill, /Do \*\*not\*\* pass companion `--background` from rescue/i);
   assert.match(runtimeSkill, /`--effort`: accepted values are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`/i);
   assert.match(runtimeSkill, /Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own/i);
   assert.match(runtimeSkill, /If the Bash call fails or Grok cannot be invoked, return nothing/i);

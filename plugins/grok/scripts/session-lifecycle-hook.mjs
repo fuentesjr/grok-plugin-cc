@@ -12,8 +12,17 @@ import {
   sendBrokerShutdown,
   teardownBrokerSession
 } from "./lib/broker-lifecycle.mjs";
+import { DEATH_KIND, recordJobDeath } from "./lib/forensics.mjs";
 import { terminateProcessTree } from "./lib/process.mjs";
-import { GROK_DATA_DIR_ENV, loadState, resolveStateFile, saveState } from "./lib/state.mjs";
+import {
+  GROK_DATA_DIR_ENV,
+  loadState,
+  readJobFile,
+  resolveJobFile,
+  resolveStateFile,
+  upsertJob,
+  writeJobFile
+} from "./lib/state.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 
 export const SESSION_ID_ENV = "GROK_COMPANION_SESSION_ID";
@@ -53,8 +62,10 @@ function cleanupSessionJobs(cwd, sessionId) {
     return;
   }
   const state = loadState(workspaceRoot);
-  const removedJobs = state.jobs.filter((job) => job.sessionId === sessionId);
-  for (const job of removedJobs) {
+  const sessionJobs = state.jobs.filter((job) => job.sessionId === sessionId);
+  const completedAt = new Date().toISOString();
+
+  for (const job of sessionJobs) {
     if (job.status !== "queued" && job.status !== "running") {
       continue;
     }
@@ -68,13 +79,55 @@ function cleanupSessionJobs(cwd, sessionId) {
     } catch {
       // Ignore direct-child teardown failures during session shutdown.
     }
+    // Keep the job record + forensics dump so a killed mid-turn job is still diagnosable.
+    try {
+      recordJobDeath(
+        workspaceRoot,
+        job.id,
+        {
+          deathKind: DEATH_KIND.SESSION_END,
+          errorMessage: "Session ended while job was still active; worker was terminated.",
+          hints: ["session-end-cleanup", "job-record-preserved-for-forensics"]
+        },
+        {
+          completedAt,
+          logFile: job.logFile ?? null,
+          status: "cancelled",
+          phase: "cancelled"
+        }
+      );
+    } catch {
+      try {
+        const jobFile = resolveJobFile(workspaceRoot, job.id);
+        const existing = fs.existsSync(jobFile) ? readJobFile(jobFile) ?? {} : {};
+        const next = {
+          ...existing,
+          ...job,
+          status: "cancelled",
+          phase: "cancelled",
+          pid: null,
+          childPid: null,
+          completedAt,
+          errorMessage: "Session ended while job was still active; worker was terminated."
+        };
+        writeJobFile(workspaceRoot, job.id, next);
+        upsertJob(workspaceRoot, {
+          id: job.id,
+          status: "cancelled",
+          phase: "cancelled",
+          pid: null,
+          childPid: null,
+          completedAt,
+          errorMessage: next.errorMessage
+        });
+      } catch {
+        // Best-effort only during session teardown.
+      }
+    }
   }
-  if (removedJobs.length > 0) {
-    saveState(workspaceRoot, {
-      ...state,
-      jobs: state.jobs.filter((job) => job.sessionId !== sessionId)
-    });
-  }
+
+  // Preserve finished and just-cancelled session jobs in the index (forensics /result).
+  // Do not delete session job records on SessionEnd.
 }
 
 function handleSessionStart(input) {

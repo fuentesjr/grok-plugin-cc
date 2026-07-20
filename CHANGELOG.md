@@ -10,6 +10,32 @@ Claude Code's `/plugin update` silently no-ops on the stale snapshot.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-07-20
+
+Job forensics and rescue reliability for long turns (#6 class).
+
+### Added
+
+- Job forensics on every tracked run: progress checkpoints (`lastProgressAt`,
+  partial assistant text), catchable death handlers, and
+  `jobs/<id>.dump.json` when a turn dies uncleanly.
+- `reapDeadJobs` upgrades dead workers with `deathKind: reaped-dead-worker` and
+  a dump so hard kills are diagnosable later.
+- Tracked-job recovery banner on every `task` (and review foreground runs):
+  job id plus `/grok:status` / `/grok:result` / `/grok:cancel` hints.
+- Rescue/agent/runtime/result-handling docs lead with the job registry so
+  forwarders cannot miss tracking, recovery, or dumps.
+
+### Changed
+
+- Default `task` (and `--wait`) is now **detach-wait**: spawn a detached
+  `task-worker`, print the job id, wait for completion, then print the stored
+  result. A killed waiting parent no longer kills the turn; recover via status/result.
+- Fire-and-forget remains `task --background` (write still requires a clean tree).
+- `SessionEnd` kills active workers but **preserves** job records as
+  `cancelled` with `deathKind: session-end` (no more silent delete of evidence).
+- Status/result rendering surfaces forensics fields when present.
+
 ## [0.2.3] - 2026-07-19
 
 Job registry isolation and stuck-job recovery (#5).

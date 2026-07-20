@@ -51,7 +51,7 @@ Notes, from `acp-client.mjs` (`GrokAcpClient.connect`) and `session-lifecycle-ho
 - The Broker is the default path, but not the only one. `--model` or `--effort` forces a **direct** `grok` spawn (sandbox profile still applies), and a busy/unreachable Broker falls back to a direct spawn unless `brokerFallback` is disabled (the stop-review gate disables it so it can detect "busy" instead).
 - The Broker is single-flight: one request socket at a time; concurrent callers get a `broker busy` RPC error.
 - Broker clients verify `_meta.broker: "grok-companion"` during `initialize`. A foreign persisted endpoint is discarded and the current request falls back to a direct Grok child.
-- `SessionEnd` sends `broker/shutdown` only after the same identity check, kills this session's queued/running job processes, and removes their records.
+- `SessionEnd` sends `broker/shutdown` only after the same identity check, kills this session's queued/running job processes, and marks those jobs `cancelled` with forensics (records/logs/dumps kept).
 - `SessionStart` copies Claude's plugin-scoped data path into `GROK_COMPANION_DATA_DIR`; exporting a Grok-specific name prevents another plugin's hook from redirecting Grok state.
 
 ## Job dispatch sequence
@@ -95,7 +95,7 @@ sequenceDiagram
     GC-->>CC: rendered result (or JSON)
 ```
 
-Background variant (`--background`): `handleTask` writes a `queued` job record, spawns a detached `task-worker` process, and returns immediately; the worker re-reads the stored request and runs the same `executeTaskRun` path. Write jobs additionally require a clean working tree before queueing.
+Default `task` (and `--wait`): `handleTask` writes a `queued` job record, spawns a detached `task-worker`, prints a tracked-job recovery banner, then waits for completion and prints the stored result. The worker survives if the waiting parent is killed (e.g. Claude Bash auto-background). Fire-and-forget (`--background` without `--wait`) returns immediately after queueing; write jobs in that mode require a clean working tree. Progress checkpoints and death handlers write forensics onto the job record; hard kills are classified later by `reapDeadJobs` into `jobs/<id>.dump.json`.
 
 ## Job lifecycle
 
@@ -120,7 +120,7 @@ How the commands relate to states:
 - `/grok:status` reads all states; `--wait` polls until the job leaves `queued`/`running`.
 - `/grok:result` only resolves `completed`/`failed`/`cancelled` jobs; an active job is an error.
 - `/grok:cancel` only accepts `queued`/`running` jobs.
-- `SessionEnd` kills and deletes this session's `queued`/`running` jobs outright (no `cancelled` record survives — the records are removed).
+- `SessionEnd` kills this session's `queued`/`running` workers and marks those jobs `cancelled` with forensics (`deathKind: session-end`), preserving job records/logs/dumps for postmortem. Finished jobs are left in place.
 - Jobs also carry a finer-grained `phase` (starting → investigating/reviewing/editing/verifying → finalizing → done) used only for status display; `status` is the state machine.
 
 ## Stop-review gate decision flow

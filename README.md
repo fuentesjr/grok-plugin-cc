@@ -60,12 +60,13 @@ Verify the CLI is ready:
 | `/grok:review` | Runs a read-only Grok Build review of the working tree or a branch diff, focused on correctness defects | `--wait\|--background`, `--base <ref>`, `--scope auto\|working-tree\|branch` |
 | `/grok:adversarial-review [focus]` | Runs a read-only Grok Build review that challenges the design and approach rather than hunting line-level bugs; accepts free-text focus | `--wait\|--background`, `--base <ref>`, `--scope auto\|working-tree\|branch` |
 | `/grok:status [job-id]` | Shows active and recent Grok jobs for this repository | `--wait`, `--timeout-ms <ms>` (default: job budget deadline), `--all` |
-| `/grok:result [job-id]` | Shows the stored final output for a finished job | — |
+| `/grok:result [job-id]` | Shows the stored final output (or forensics / partial message) for a finished job | — |
 | `/grok:cancel [job-id]` | Cancels an active background job | — |
 
 ### `/grok:rescue`
 
 - Runs in the foreground by default; pass `--background` to run it as a background Claude task.
+- Every rescue is a **tracked job**: the companion prints `Tracked job <id> started` with recovery commands, runs a detached worker, and waits for the result. If the waiting process dies, the worker keeps going — use `/grok:status <id>` and `/grok:result <id>`. Unclean deaths leave `jobs/<id>.dump.json` forensics beside the job log.
 - Without `--resume` or `--fresh`, Claude checks for a resumable Grok thread from this session and asks once (via `AskUserQuestion`) whether to continue it or start fresh. `--resume`/`--fresh` skip that prompt.
 - `--model` passes through to Grok's model selection; `fast` maps to `grok-composer-2.5-fast`. Leave it unset to use Grok's own default.
 - `--effort` passes through Grok's reasoning effort (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`) and is left unset unless you ask for it.

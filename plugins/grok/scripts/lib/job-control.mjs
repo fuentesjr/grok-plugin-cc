@@ -1,5 +1,6 @@
 import fs from "node:fs";
 
+import { DEATH_KIND, mergeForensics, recordJobDeath } from "./forensics.mjs";
 import {
   DEFAULT_BUDGET_GRACE_MS,
   DEFAULT_JOB_BUDGET_MS,
@@ -26,7 +27,8 @@ export const MIN_STATUS_WAIT_TIMEOUT_MS = 5_000;
 export const STATUS_WAIT_TIMEOUT_EXIT_CODE = 2;
 /** Age cutoff when a running/queued job has no usable pid (shared with the Stop gate). */
 export const STALE_RUNNING_JOB_AGE_MS = 12 * 60 * 1000;
-const DEAD_WORKER_MESSAGE = "Worker process is no longer running.";
+export const DEAD_WORKER_MESSAGE =
+  "Worker process is no longer running. Check the job log and dump for last progress; recover with /grok:status and /grok:result.";
 
 export function sortJobsNewestFirst(jobs) {
   return [...jobs].sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
@@ -58,21 +60,10 @@ export function isJobInFlight(job, now = Date.now()) {
   return timestamp != null && now - timestamp <= STALE_RUNNING_JOB_AGE_MS;
 }
 
-function markJobWorkerDead(job, completedAt) {
-  return {
-    ...job,
-    status: "failed",
-    phase: "failed",
-    pid: null,
-    childPid: null,
-    completedAt,
-    errorMessage: DEAD_WORKER_MESSAGE
-  };
-}
-
 /**
  * Persist failed status for queued/running jobs whose worker is gone so
  * resume-last / status / cancel no longer treat them as live.
+ * Writes forensics + dump when possible so hard kills are diagnosable later.
  */
 export function reapDeadJobs(cwd, options = {}) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
@@ -83,17 +74,66 @@ export function reapDeadJobs(cwd, options = {}) {
   const nextJobs = state.jobs.map((job) => {
     if ((job.status === "queued" || job.status === "running") && !isJobInFlight(job, now)) {
       changed = true;
-      const reaped = markJobWorkerDead(job, completedAt);
       try {
-        const jobFile = resolveJobFile(workspaceRoot, job.id);
-        if (fs.existsSync(jobFile)) {
-          const existing = readJobFile(jobFile) ?? {};
-          fs.writeFileSync(jobFile, `${JSON.stringify({ ...existing, ...reaped }, null, 2)}\n`, "utf8");
-        }
+        const reaped = recordJobDeath(
+          workspaceRoot,
+          job.id,
+          {
+            deathKind: DEATH_KIND.REAPED_DEAD_WORKER,
+            errorMessage: DEAD_WORKER_MESSAGE,
+            hints: [
+              "worker-pid-not-alive",
+              job.forensics?.runtime?.dispatch === "foreground"
+                ? "foreground-process-may-have-been-killed-with-parent"
+                : "detached-worker-exited-without-finalizing"
+            ].filter(Boolean)
+          },
+          {
+            completedAt,
+            logFile: job.logFile ?? null,
+            status: "failed",
+            phase: "failed"
+          }
+        );
+        return {
+          ...job,
+          ...reaped,
+          id: job.id,
+          status: "failed",
+          phase: "failed",
+          pid: null,
+          childPid: null,
+          completedAt,
+          errorMessage: DEAD_WORKER_MESSAGE,
+          forensics: reaped.forensics
+        };
       } catch {
-        // Index update below remains authoritative if the per-job file is missing.
+        const forensics = mergeForensics(job.forensics, {
+          deathKind: DEATH_KIND.REAPED_DEAD_WORKER,
+          detectedAt: completedAt,
+          errorMessage: DEAD_WORKER_MESSAGE
+        });
+        const fallback = {
+          ...job,
+          status: "failed",
+          phase: "failed",
+          pid: null,
+          childPid: null,
+          completedAt,
+          errorMessage: DEAD_WORKER_MESSAGE,
+          forensics
+        };
+        try {
+          const jobFile = resolveJobFile(workspaceRoot, job.id);
+          if (fs.existsSync(jobFile)) {
+            const existing = readJobFile(jobFile) ?? {};
+            fs.writeFileSync(jobFile, `${JSON.stringify({ ...existing, ...fallback }, null, 2)}\n`, "utf8");
+          }
+        } catch {
+          // Index update below remains authoritative if the per-job file is missing.
+        }
+        return fallback;
       }
-      return reaped;
     }
     return job;
   });

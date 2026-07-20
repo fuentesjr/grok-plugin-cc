@@ -252,13 +252,15 @@ test("setup toggles and reports the opt-in stop review gate", () => {
   assert.match(conflict.stderr, /Choose either --enable-review-gate or --disable-review-gate\./);
 });
 
-test("foreground task stores its result, job record, and progress log", async (t) => {
+test("default task is a detach-wait tracked job with result, log, and banner", async (t) => {
   const { cwd, env } = setupFake("task-ok");
   t.after(() => cleanupBroker(cwd));
 
-  const payload = jsonOutput(
-    runCompanion(["task", "--json", "-C", cwd, "Implement", "the", "change"], { cwd, env })
-  );
+  const result = runCompanion(["task", "--json", "-C", cwd, "Implement", "the", "change"], { cwd, env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Tracked job /);
+  assert.match(result.stderr, /\/grok:status /);
+  const payload = parseJson(result.stdout);
   assert.equal(payload.status, 0);
   assert.equal(payload.rawOutput, "Task completed.");
   assert.ok(payload.jobId);
@@ -271,6 +273,66 @@ test("foreground task stores its result, job record, and progress log", async (t
   assert.equal(stored.result.rawOutput, "Task completed.");
   assert.equal(fs.existsSync(job.logFile), true);
   assert.match(fs.readFileSync(job.logFile, "utf8"), /Turn completed \(end_turn\)/);
+  assert.match(fs.readFileSync(job.logFile, "utf8"), /tracked job/i);
+  assert.equal(stored.forensics?.runtime?.dispatch, "detach-wait");
+  assert.equal(stored.forensics?.completedCleanly, true);
+});
+
+test("reapDeadJobs writes forensics dump for a dead worker", () => {
+  const { cwd, env } = setupFake("task-ok");
+  upsertJob(cwd, {
+    id: "task-dead-forensics",
+    jobClass: "task",
+    kind: "task",
+    status: "running",
+    phase: "investigating",
+    pid: 2_147_483_646,
+    title: "Dead forensics",
+    summary: "stuck",
+    sessionId: null,
+    updatedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    forensics: {
+      lastProgressAt: new Date().toISOString(),
+      lastPhase: "investigating",
+      partialFinalMessage: "halfway through the answer",
+      partialFinalMessageChars: 26,
+      runtime: { dispatch: "detach-wait" }
+    }
+  });
+  // Ensure a job file exists so the dump path is written beside it.
+  fs.writeFileSync(
+    resolveJobFile(cwd, "task-dead-forensics"),
+    `${JSON.stringify(
+      {
+        id: "task-dead-forensics",
+        status: "running",
+        phase: "investigating",
+        pid: 2_147_483_646,
+        forensics: {
+          lastProgressAt: new Date().toISOString(),
+          lastPhase: "investigating",
+          partialFinalMessage: "halfway through the answer",
+          partialFinalMessageChars: 26,
+          runtime: { dispatch: "detach-wait" }
+        }
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+
+  const status = runCompanion(["status", "task-dead-forensics", "--json", "-C", cwd], { cwd, env });
+  assert.equal(status.status, 0, status.stderr);
+  const snapshot = parseJson(status.stdout);
+  assert.equal(snapshot.job.status, "failed");
+  assert.equal(snapshot.job.forensics?.deathKind, "reaped-dead-worker");
+  assert.ok(snapshot.job.forensics?.dumpFile);
+  assert.equal(fs.existsSync(snapshot.job.forensics.dumpFile), true);
+  const dump = parseJson(fs.readFileSync(snapshot.job.forensics.dumpFile, "utf8"));
+  assert.equal(dump.deathKind, "reaped-dead-worker");
+  assert.match(String(dump.partialFinalMessage ?? ""), /halfway/);
 });
 
 test("background task completes through status --wait and result", async (t) => {
@@ -346,7 +408,8 @@ test("resume-last reaps a stuck running job whose worker pid is dead", async (t)
   const blocked = runCompanion(["task", "--resume-last", "--json", "-C", cwd], { cwd, env });
   // Without the fix this fails with "still running"; with the fix it reaps and resumes.
   assert.equal(blocked.status, 0, blocked.stderr);
-  assert.doesNotMatch(blocked.stderr, /still running/i);
+  assert.doesNotMatch(blocked.stderr, /is still running/i);
+  assert.doesNotMatch(blocked.stdout, /is still running/i);
   const payload = parseJson(blocked.stdout);
   assert.equal(payload.status, 0);
   assert.notEqual(payload.jobId, "task-dead-worker");
@@ -1038,7 +1101,7 @@ test("SessionStart exports shell-escaped, Grok-specific session state", () => {
   assert.match(exports, /'"'"'/);
 });
 
-test("SessionEnd kills running jobs and removes jobs for the ending session", async (t) => {
+test("SessionEnd kills running jobs but preserves job records with forensics", async (t) => {
   const { cwd, env } = setupFake("task-ok");
   const worker = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
     detached: true,
@@ -1066,7 +1129,11 @@ test("SessionEnd kills running jobs and removes jobs for the ending session", as
     input: JSON.stringify({ session_id: "ending-session", cwd })
   });
   assert.equal(end.status, 0, end.stderr);
-  assert.equal(loadState(cwd).jobs.some((job) => job.id === "session-job"), false);
+  const preserved = loadState(cwd).jobs.find((job) => job.id === "session-job");
+  assert.ok(preserved, "session job record must be kept for forensics");
+  assert.equal(preserved.status, "cancelled");
+  assert.match(String(preserved.errorMessage ?? ""), /Session ended/i);
+  assert.equal(preserved.forensics?.deathKind, "session-end");
   await waitFor(() => {
     try {
       process.kill(worker.pid, 0);

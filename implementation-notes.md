@@ -243,3 +243,12 @@ Posture: faithful port of codex's Phase-2 surface; deviate only where Grok's run
 - Fix (b): shared `processIsAlive` + `isJobInFlight` + `reapDeadJobs` (mark failed, clear pids); called from status/cancel/resume-last. Stop gate imports the same in-flight helper.
 - Fix (c): status snapshot/text include `stateFile`; cancel and still-running errors append `State file: …`.
 - Verification: `node --test tests/*.test.mjs` (full suite). Version 0.2.3.
+
+## Build log — forensics + detach-wait rescue reliability (2026-07-20)
+
+- Problem class (#6): rescue forwarder ran in-process foreground `task`; Claude Bash ~60s auto-background + subagent teardown could kill the turn mid-stream with no recoverable final message. Agent/skill text treated `--background` as Claude-side only and never made the job registry obvious.
+- Fix A (survival): default `task` is **detach-wait** — `enqueueBackgroundTask` + wait + print stored result. Fire-and-forget remains explicit `--background` (clean-tree for write). First line is always a recovery banner with job id.
+- Fix B (forensics): `lib/forensics.mjs` — progress checkpoints, partial assistant capture, death handlers (signal/uncaught), richer `reapDeadJobs` dumps (`jobs/<id>.dump.json`), SessionEnd preserves cancelled jobs with `deathKind: session-end` instead of deleting evidence.
+- Fix C (clarity): `grok-cli-runtime`, `grok-rescue`, `/grok:rescue`, and `grok-result-handling` lead with **Tracked jobs** tables/rules; status/result render forensics; architecture + README updated.
+- Tradeoff: default write tasks no longer require clean tree (only fire-and-forget background write does). Detached worker can still race Claude edits if the parent keeps working; rescue forwarder contract is still "do nothing else while waiting."
+- Verification: `node --test tests/*.test.mjs` — **113/113**. Version **0.2.4**. Restart broker after install or live runs exercise stale code.

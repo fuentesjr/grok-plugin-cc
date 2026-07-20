@@ -6,10 +6,23 @@ allowed-tools: Bash(node:*), AskUserQuestion, Agent
 
 Invoke the `grok:grok-rescue` subagent via the `Agent` tool (`subagent_type: "grok:grok-rescue"`), forwarding the raw user request as the prompt.
 `grok:grok-rescue` is a subagent, not a skill — do not call `Skill(grok:grok-rescue)` (no such skill) or `Skill(grok:rescue)` (that re-enters this command and hangs the session). The command runs inline so the `Agent` tool stays in scope; forked general-purpose subagents do not expose it.
-The final user-visible response must be Grok Build's output verbatim.
+The final user-visible response must be Grok Build's output verbatim (including the companion's tracked-job banner when present).
 
 Raw user request:
 $ARGUMENTS
+
+## Tracked jobs
+
+Rescue always uses the companion **job registry**. Default `task` runs a detached worker and waits for the result; the first line of output names the job id.
+
+If a long run is interrupted or the stream looks frozen/incomplete:
+
+1. Read the job id from the `Tracked job <id> started` banner (or `/grok:status`).
+2. `/grok:status <id>` for phase/log/forensics.
+3. `/grok:result <id>` for the final or partial result.
+4. Crash dumps live beside the job log as `jobs/<id>.dump.json` when a turn dies uncleanly.
+
+Do not invent a substitute answer when Grok was interrupted — recover from the tracked job.
 
 Execution mode:
 
