@@ -1,12 +1,25 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 
 import { makeTempDir } from "./helpers.mjs";
-import { readJsonFile } from "../plugins/grok/scripts/lib/fs.mjs";
-import { resolveJobFile, resolveJobLogFile, resolveStateDir, resolveStateFile, saveState } from "../plugins/grok/scripts/lib/state.mjs";
+import {
+  JSON_READ_MAX_ATTEMPTS,
+  readJsonFile,
+  writeJsonFileAtomic
+} from "../plugins/grok/scripts/lib/fs.mjs";
+import {
+  resolveJobFile,
+  resolveJobLogFile,
+  resolveStateDir,
+  resolveStateFile,
+  saveState,
+  writeJobFile
+} from "../plugins/grok/scripts/lib/state.mjs";
 
 // Keep fallback-state tests independent of the host Claude session.
 delete process.env.CLAUDE_PLUGIN_DATA;
@@ -155,5 +168,131 @@ test("saveState prunes dropped job artifacts when indexed jobs exceed the cap", 
     Array.from({ length: 50 }, (_, index) => `job-${index + 1}`)
       .flatMap((jobId) => [`${jobId}.json`, `${jobId}.log`])
       .sort()
+  );
+});
+
+test("writeJsonFileAtomic + readJsonFile survive a concurrent multi-process writer", async () => {
+  const dir = makeTempDir();
+  const target = path.join(dir, "shared.json");
+  writeJsonFileAtomic(target, { ok: true, i: 0, pad: "x".repeat(2000) });
+
+  const writerScript = `
+    import { writeJsonFileAtomic } from ${JSON.stringify(
+      fileURLToPath(new URL("../plugins/grok/scripts/lib/fs.mjs", import.meta.url))
+    )};
+    const target = ${JSON.stringify(target)};
+    for (let i = 0; i < 8000; i += 1) {
+      writeJsonFileAtomic(target, { ok: true, i, pad: "x".repeat(2000) });
+    }
+  `;
+  const writer = spawn(process.execPath, ["--input-type=module", "-e", writerScript], {
+    stdio: "ignore"
+  });
+
+  let ok = 0;
+  let failures = 0;
+  const started = Date.now();
+  while (Date.now() - started < 600) {
+    try {
+      const parsed = readJsonFile(target);
+      assert.equal(parsed.ok, true);
+      ok += 1;
+    } catch {
+      failures += 1;
+    }
+  }
+
+  writer.kill("SIGTERM");
+  await new Promise((resolve) => {
+    writer.once("exit", resolve);
+    setTimeout(resolve, 500);
+  });
+
+  assert.equal(failures, 0, `expected 0 parse failures under atomic writes, got ${failures} (ok=${ok})`);
+  assert.ok(ok > 100, `expected sustained concurrent reads, got ok=${ok}`);
+});
+
+test("writeJobFile is multi-process safe for parent/worker job dumps", async () => {
+  const workspace = makeTempDir();
+  const jobId = "task-race-test";
+  writeJobFile(workspace, jobId, { id: jobId, status: "queued", pad: "y".repeat(1500) });
+  const jobFile = resolveJobFile(workspace, jobId);
+
+  const writerScript = `
+    import { writeJobFile } from ${JSON.stringify(
+      fileURLToPath(new URL("../plugins/grok/scripts/lib/state.mjs", import.meta.url))
+    )};
+    const workspace = ${JSON.stringify(workspace)};
+    const jobId = ${JSON.stringify(jobId)};
+    for (let i = 0; i < 6000; i += 1) {
+      writeJobFile(workspace, jobId, { id: jobId, status: "running", i, pad: "y".repeat(1500) });
+    }
+  `;
+  const writer = spawn(process.execPath, ["--input-type=module", "-e", writerScript], {
+    stdio: "ignore"
+  });
+
+  let ok = 0;
+  let failures = 0;
+  const started = Date.now();
+  while (Date.now() - started < 500) {
+    try {
+      const parsed = readJsonFile(jobFile);
+      assert.equal(parsed.id, jobId);
+      ok += 1;
+    } catch {
+      failures += 1;
+    }
+  }
+
+  writer.kill("SIGTERM");
+  await new Promise((resolve) => {
+    writer.once("exit", resolve);
+    setTimeout(resolve, 500);
+  });
+
+  assert.equal(failures, 0, `writeJobFile race failures: ${failures} (ok=${ok})`);
+  assert.ok(ok > 50, `expected concurrent job-file reads, got ok=${ok}`);
+});
+
+test("readJsonFile retries empty content then succeeds", () => {
+  const dir = makeTempDir();
+  const target = path.join(dir, "eventual.json");
+  fs.writeFileSync(target, "", "utf8");
+
+  let writes = 0;
+  const originalRead = fs.readFileSync;
+  fs.readFileSync = (filePath, encoding) => {
+    if (path.resolve(String(filePath)) === path.resolve(target)) {
+      writes += 1;
+      if (writes >= 2) {
+        return `${JSON.stringify({ recovered: true })}\n`;
+      }
+      return "";
+    }
+    return originalRead(filePath, encoding);
+  };
+
+  try {
+    const parsed = readJsonFile(target, { maxAttempts: JSON_READ_MAX_ATTEMPTS, retryDelayMs: 1 });
+    assert.deepEqual(parsed, { recovered: true });
+    assert.ok(writes >= 2);
+  } finally {
+    fs.readFileSync = originalRead;
+  }
+});
+
+test("readJsonFile labels permanent parse failures after retries", () => {
+  const dir = makeTempDir();
+  const target = path.join(dir, "broken.json");
+  fs.writeFileSync(target, "{not-json", "utf8");
+
+  assert.throws(
+    () => readJsonFile(target, { maxAttempts: 2, retryDelayMs: 0 }),
+    (error) => {
+      assert.match(String(error.message), /Failed to read JSON file/);
+      assert.match(String(error.message), /broken\.json/);
+      return true;
+    }
   );
 });

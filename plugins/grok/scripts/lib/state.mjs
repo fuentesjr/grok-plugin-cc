@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { readJsonFile } from "./fs.mjs";
+import { readJsonFile, writeJsonFileAtomic } from "./fs.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
 const STATE_VERSION = 1;
@@ -119,12 +119,6 @@ function removeFileIfExists(filePath) {
   }
 }
 
-function writeStateFileAtomic(filePath, value) {
-  const tempFile = `${filePath}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
-  fs.writeFileSync(tempFile, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  fs.renameSync(tempFile, filePath);
-}
-
 export function saveState(cwd, state) {
   const previousJobs = loadState(cwd).jobs;
   ensureStateDir(cwd);
@@ -149,7 +143,7 @@ export function saveState(cwd, state) {
     removeFileIfExists(job.logFile);
   }
 
-  writeStateFileAtomic(resolveStateFile(cwd), nextState);
+  writeJsonFileAtomic(resolveStateFile(cwd), nextState);
   return nextState;
 }
 
@@ -214,7 +208,8 @@ export function setLastTaskSession(cwd, session) {
 export function writeJobFile(cwd, jobId, payload) {
   ensureStateDir(cwd);
   const jobFile = resolveJobFile(cwd, jobId);
-  fs.writeFileSync(jobFile, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  // Atomic write: parent wait + detached worker both touch this file.
+  writeJsonFileAtomic(jobFile, payload);
   return jobFile;
 }
 

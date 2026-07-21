@@ -14,7 +14,8 @@ import {
   readJobFile,
   resolveJobFile,
   resolveStateFile,
-  saveState
+  saveState,
+  writeJobFile
 } from "./state.mjs";
 import { SESSION_ID_ENV } from "./tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
@@ -127,7 +128,7 @@ export function reapDeadJobs(cwd, options = {}) {
           const jobFile = resolveJobFile(workspaceRoot, job.id);
           if (fs.existsSync(jobFile)) {
             const existing = readJobFile(jobFile) ?? {};
-            fs.writeFileSync(jobFile, `${JSON.stringify({ ...existing, ...fallback }, null, 2)}\n`, "utf8");
+            writeJobFile(workspaceRoot, job.id, { ...existing, ...fallback });
           }
         } catch {
           // Index update below remains authoritative if the per-job file is missing.

@@ -10,6 +10,16 @@ Claude Code's `/plugin update` silently no-ops on the stale snapshot.
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-07-21
+
+### Fixed
+
+- Default `task` no longer fails intermittently with bare
+  `Unexpected end of JSON input` when the waiting parent and detached worker
+  race on `jobs/<id>.json` (#7). Job dumps (and other shared JSON) now write
+  atomically (temp + rename), and reads retry briefly before surfacing a
+  labeled error.
+
 ## [0.2.4] - 2026-07-20
 
 Job forensics and rescue reliability for long turns (#6 class).

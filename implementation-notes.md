@@ -252,3 +252,10 @@ Posture: faithful port of codex's Phase-2 surface; deviate only where Grok's run
 - Fix C (clarity): `grok-cli-runtime`, `grok-rescue`, `/grok:rescue`, and `grok-result-handling` lead with **Tracked jobs** tables/rules; status/result render forensics; architecture + README updated.
 - Tradeoff: default write tasks no longer require clean tree (only fire-and-forget background write does). Detached worker can still race Claude edits if the parent keeps working; rescue forwarder contract is still "do nothing else while waiting."
 - Verification: `node --test tests/*.test.mjs` — **113/113**. Version **0.2.4**. Restart broker after install or live runs exercise stale code.
+
+## Build log — issue #7 atomic job-file I/O (2026-07-21)
+
+- Symptom: default detach-wait `task` sometimes exited ~10–13s after the tracked-job banner with bare `Unexpected end of JSON input` (empty `JSON.parse`); retry often succeeded. `--fresh` is a routing no-op on the companion and was a red herring.
+- Root cause: `jobs/<id>.json` used truncate-then-write while parent wait and detached worker (progress ~2s) both touch the file. `state.json` was already atomic; job dumps were not. Confirmed multi-process empty-read race on macOS.
+- Fix: shared `writeJsonFileAtomic` (temp + same-dir rename); `writeJobFile` / `saveState` / `writeJsonFile` use it; reaper fallback uses `writeJobFile` not raw `writeFileSync`. `readJsonFile` retries briefly on empty/parse error, then throws a path-labeled error.
+- Verification: multi-process concurrent writer/reader tests in `tests/state.test.mjs`; full suite run at release. Version **0.2.5**.
